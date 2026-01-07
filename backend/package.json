@@ -1,0 +1,32 @@
+{
+  "name": "cyclekernel-monitoring",
+  "version": "1.0.0",
+  "description": "CycleKernel Monitoring Backend with MongoDB, Redis, and Prometheus",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "cyclekernel",
+    "monitoring",
+    "prometheus",
+    "mongodb",
+    "redis"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3",
+    "redis": "^4.6.11",
+    "prom-client": "^15.1.0",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

@@ -1,0 +1,63 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'cyclekernel'
+    environment: 'production'
+
+scrape_configs:
+  # Simulation backend metrics
+  - job_name: 'simulation'
+    static_configs:
+      - targets: ['simulation:5000']
+        labels:
+          service: 'simulation'
+          component: 'backend'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Monitoring backend metrics
+  - job_name: 'monitoring'
+    static_configs:
+      - targets: ['monitoring:3000']
+        labels:
+          service: 'monitoring'
+          component: 'backend'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          component: 'monitoring'
+
+  # MongoDB exporter (if added later)
+  - job_name: 'mongodb'
+    static_configs:
+      - targets: ['mongodb-exporter:9216']
+        labels:
+          service: 'mongodb'
+          component: 'database'
+    scrape_interval: 30s
+
+  # Redis exporter (if added later)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          service: 'redis'
+          component: 'cache'
+    scrape_interval: 30s
+
+# Alerting rules (can be extended)
+rule_files:
+  # - 'alerts.yml'
+
+# Alertmanager configuration (if needed)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
