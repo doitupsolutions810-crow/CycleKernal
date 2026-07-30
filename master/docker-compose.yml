@@ -26,6 +26,7 @@ services:
     environment:
       - BRIDGE_URL=http://cognitive-bridge:8090
       - TERMINAL_URL=http://terminal-runtime:8200
+      - CHAT_URL=http://chat:8300
       - ARTIFACT_ROOT=/artifacts
     volumes:
       - ck-artifacts:/artifacts
@@ -49,6 +50,25 @@ services:
     networks: [cyclekernel-net]
     restart: unless-stopped
 
+  chat:
+    build:
+      context: ./src/chat
+      dockerfile: Dockerfile
+    container_name: ck-chat
+    ports:
+      - "8300:8300"
+    environment:
+      - BRIDGE_URL=http://cognitive-bridge:8090
+      - ORCH_URL=http://orchestrator:8100
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+    depends_on:
+      - cognitive-bridge
+      - orchestrator
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+
   web:
     image: nginx:alpine
     container_name: ck-web
@@ -56,7 +76,7 @@ services:
       - "8080:80"
     volumes:
       - ./web:/usr/share/nginx/html:ro
-    depends_on: [orchestrator]
+    depends_on: [orchestrator, chat]
     networks: [cyclekernel-net]
     restart: unless-stopped
 
