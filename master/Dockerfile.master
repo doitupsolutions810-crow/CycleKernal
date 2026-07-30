@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src/orchestrator/requirements.txt /tmp/req-orch.txt
+COPY src/agents/requirements.txt /tmp/req-agents.txt
+RUN pip install --no-cache-dir -r /tmp/req-orch.txt -r /tmp/req-agents.txt
+
+COPY src/orchestrator /app/orchestrator
+COPY src/agents /app/agents
+COPY src/bridge /app/bridge
+
+ENV PYTHONPATH=/app
+EXPOSE 8100
+
+CMD ["uvicorn", "orchestrator.main:app", "--host", "0.0.0.0", "--port", "8100"]
