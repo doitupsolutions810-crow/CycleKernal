@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  cognitive-bridge:
+    build: ./src/bridge
+    container_name: cyclekernel-cognitive-bridge
+    ports:
+      - "8090:8090"
+    networks:
+      - cyclekernel-network
+    environment:
+      - RELAY_URL=ws://ws-relay:8081/ws/out
+    restart: unless-stopped
+
+networks:
+  cyclekernel-network:
+    external: true
+    name: cyclekernel-network
