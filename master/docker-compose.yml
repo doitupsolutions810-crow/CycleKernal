@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  cognitive-bridge:
+    build:
+      context: ./src/bridge
+      dockerfile: Dockerfile
+    container_name: ck-cognitive-bridge
+    ports:
+      - "8090:8090"
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+    container_name: ck-orchestrator
+    ports:
+      - "8100:8100"
+    environment:
+      - BRIDGE_URL=http://cognitive-bridge:8090
+      - TERMINAL_URL=http://terminal-runtime:8200
+      - ARTIFACT_ROOT=/artifacts
+    volumes:
+      - ck-artifacts:/artifacts
+    depends_on:
+      cognitive-bridge:
+        condition: service_healthy
+      terminal-runtime:
+        condition: service_started
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+
+  terminal-runtime:
+    build:
+      context: ./src/terminal
+      dockerfile: Dockerfile
+    container_name: ck-terminal-runtime
+    ports:
+      - "8200:8200"
+    volumes:
+      - ck-artifacts:/artifacts
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+
+  web:
+    image: nginx:alpine
+    container_name: ck-web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+    depends_on: [orchestrator]
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ck-redis
+    ports:
+      - "6379:6379"
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+
+networks:
+  cyclekernel-net:
+    driver: bridge
+    name: cyclekernel-net
+
+volumes:
+  ck-artifacts:
+    name: ck-artifacts
