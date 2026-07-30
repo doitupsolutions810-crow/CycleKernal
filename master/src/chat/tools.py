@@ -1,0 +1,1 @@
+# See artifacts for full source — ToolRegistry, ToolCall, ToolResult, OpenAI schemas, handlers for research/scrape/planning/coding/pipeline/get_mood/terminal_execute
