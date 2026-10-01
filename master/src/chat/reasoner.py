@@ -37,6 +37,12 @@ Always return valid JSON only.
 """
 
 
+def llm_completions_url() -> str:
+    if not LLM_BASE_URL:
+        return ""
+    return f"{LLM_BASE_URL}/v1/chat/completions"
+
+
 async def call_llm(messages: List[Dict[str, str]], mood_override: str = "") -> str:
     if not LLM_BASE_URL:
         return ""
@@ -54,7 +60,7 @@ async def call_llm(messages: List[Dict[str, str]], mood_override: str = "") -> s
     }
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(f"{LLM_BASE_URL}/v1/chat/completions", json=payload, headers=headers)
+            r = await client.post(llm_completions_url(), json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
             return data["choices"][0]["message"]["content"]
@@ -114,7 +120,9 @@ async def reason(user_message: str, history: List[Dict] = None, mood: str = "") 
     if llm_raw:
         decision = parse_tool_response(llm_raw)
         decision["source"] = "custom_llm"
+        decision["llm_url"] = llm_completions_url()
         return decision
     decision = local_reason(user_message, history)
     decision["source"] = "local_reasoner"
+    decision["llm_url"] = llm_completions_url()
     return decision

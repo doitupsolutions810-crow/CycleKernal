@@ -6,6 +6,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 import './App.css';
+import ColonyHud from './ColonyHud';
 
 const SIMULATION_URL = process.env.REACT_APP_SIMULATION_URL || 'http://localhost:5000';
 const MONITORING_URL = process.env.REACT_APP_MONITORING_URL || 'http://localhost:3000';
@@ -179,6 +180,7 @@ function App() {
       </div>
 
       <div className="dashboard">
+        <ColonyHud colony={simulationState?.colony} />
         <div className="stats-grid">
           <div className="stat-card">
             <h3>Total Civilizations</h3>
