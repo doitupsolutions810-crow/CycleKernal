@@ -26,7 +26,7 @@ class FusionStressTests(unittest.TestCase):
             apply_fusion("neutral", {"stress_residual": 8.9})
 
     def test_zero_stress_preserves_existing_entropy_semantics(self):
-        expected = ns_fitness(core=0.6, entropy=0.2, coupling=0.2)
+        expected = ns_fitness(core=0.6, entropy=0.2, coupling=0.04)
         result = apply_fusion("neutral", {"Core": 0.6, "L5": 0.2, "L2": 0.04})
         self.assertAlmostEqual(result["ns_fitness"], expected, places=4)
 
