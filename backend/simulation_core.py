@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from threading import Lock
 
 import numpy as np
 from flask import Flask, jsonify, request
@@ -65,6 +66,7 @@ class Universe:
         self.promote_log = []
         # One scheduler-driven Great Scale tick per universe simulation cycle.
         self.descent_engine = DescentEngine(start=1.0, k=0.5)
+        self._descent_state_lock = Lock()
 
     def add_civilization(self, civ_id):
         if civ_id not in self.civilizations:
@@ -105,8 +107,9 @@ class Universe:
         }
 
     def simulate_cycle(self):
-        self.cycle_count += 1
-        descent_record = self.descent_engine.tick()
+        with self._descent_state_lock:
+            self.cycle_count += 1
+            descent_record = self.descent_engine.tick()
         residual = descent_record["residual"]
         great_scale_descent_ticks.inc()
         great_scale_descent_residual.labels(universe_id=self.id).set(residual)
@@ -156,6 +159,16 @@ class Universe:
 
     def descent_snapshot(self, running=False):
         return self.descent_engine.snapshot(running=running)
+
+    def scale_state_snapshot(self, running=False):
+        with self._descent_state_lock:
+            snapshot = self.descent_engine.snapshot(running=running)
+            return {
+                **snapshot,
+                "universe_id": self.id,
+                "cycle_count": self.cycle_count,
+                "stress_residual_normalized": snapshot["residualNormalized"],
+            }
 
 class CycleKernel:
     def __init__(self):
@@ -303,13 +316,7 @@ def get_scale_state():
     universe = kernel.universes.get("U1") or next(iter(kernel.universes.values()), None)
     if universe is None:
         return jsonify({"status": "unavailable", "error": "no universe exists"}), 503
-    snapshot = universe.descent_snapshot(running=kernel.running)
-    return jsonify({
-        **snapshot,
-        "universe_id": universe.id,
-        "cycle_count": universe.cycle_count,
-        "stress_residual_normalized": snapshot["residualNormalized"],
-    })
+    return jsonify(universe.scale_state_snapshot(running=kernel.running))
 
 
 @app.route("/colony", methods=["GET"])
