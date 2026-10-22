@@ -3,11 +3,12 @@
 mood_dot = clip(alpha * ns_fitness + beta * mood_score)
 Promotion is gated on mood_dot, not on raw symbolic score alone.
 """
-
 from __future__ import annotations
 
 import hashlib
 from typing import Any, Dict, Mapping, Optional
+
+from descent_engine import entropy_with_stress, normalized_stress_residual
 
 ALPHA = 0.65
 BETA = 0.35
@@ -34,7 +35,6 @@ def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> f
     compute = float(resources.get("compute", 0.0))
     memory_nodes = float(resources.get("memory_nodes", 0.0))
     viable = _clip((attention / 150.0) * 0.45 + (compute / 40.0) * 0.35 + (memory_nodes / 8.0) * 0.20)
-    # Symbolic preference: high truth and enough resources to act on it.
     return _clip(0.55 * truth + 0.45 * viable)
 
 
@@ -88,10 +88,18 @@ def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, 
 
 
 def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """Attach fused mood fields onto a trait-mapper result."""
+    """Attach fused mood fields and a typed Great Scale stress receipt.
+
+    If no descent residual is supplied, the legacy score path is unchanged and
+    the output explicitly records a zero residual. Residual normalization is
+    valid only for the configured Great Scale [1, 8] descent orbit.
+    """
     core = float(metrics.get("Core", metrics.get("core", 0.5)))
-    entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
+    base_entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
     coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
+    residual = float(metrics.get("stress_residual", 0.0))
+    residual_normalized = normalized_stress_residual(residual)
+    entropy = entropy_with_stress(base_entropy, residual)
     fit = ns_fitness(core=core, entropy=entropy, coupling=coupling)
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})
@@ -109,6 +117,10 @@ def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[M
         "beta": BETA,
         "promote": decision,
         "genome_id": colony.get("genome_id") or genome_id(f"{label}:{fit:.4f}:{core:.3f}"),
+        "stress_residual": residual,
+        "stress_residual_normalized": residual_normalized,
+        "neural_entropy_used": entropy,
+        "descent_schema": "great-scale.descent/v0.4.2",
         "colony": {
             "active": int(colony.get("active", 0)),
             "promoted": int(colony.get("promoted", 0)),
