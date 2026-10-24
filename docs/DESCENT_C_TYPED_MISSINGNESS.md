@@ -88,3 +88,8 @@ The branch regression suites now assert that:
 5. relay normalization preserves an explicitly empty object.
 
 The focused arithmetic is directly checkable from the formula above. The exact committed repository tests, Python compile step, and Docker builds still require a real GitHub Actions runner. Recent Actions attempts have failed before any runner was assigned, with no job steps executed; that status is blocked/unverified, not a passing build and not evidence of a test assertion failure.
+
+
+## Follow-on: explicit-null closure (Descent CII)
+
+The valid input domain distinguishes an omitted key from a present mapping, including an empty mapping. A present `null` is not an omitted key: the relay parser rejects it, and all three core fusion implementations now reject it at the `apply_fusion` boundary rather than quietly defaulting. See [Descent CII](DESCENT_CII_EXPLICIT_NULL_CLOSURE.md).
