@@ -65,6 +65,7 @@ class Universe:
         self.myths = {}
         self.cycle_count = 0
         self.promote_log = []
+        self.max_promotion_log = 500
         self.fusion_log = []
         self.max_fusion_log = 500
         # One scheduler-driven Great Scale tick per universe simulation cycle.
@@ -180,10 +181,14 @@ class Universe:
                 civ["promoted"] = True
                 civ["state"] = "promoted"
                 self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count, "fitness_evidence": evidence})
+                if len(self.promote_log) > self.max_promotion_log:
+                    del self.promote_log[:-self.max_promotion_log]
             elif decision["action"] == "demote":
                 civ["promoted"] = False
                 civ["state"] = "active"
                 self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count, "fitness_evidence": evidence})
+                if len(self.promote_log) > self.max_promotion_log:
+                    del self.promote_log[:-self.max_promotion_log]
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
     def descent_snapshot(self, running=False):
