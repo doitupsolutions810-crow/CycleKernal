@@ -131,6 +131,7 @@ def build_fitness_evidence(
     mood_input: str = "neutral",
     mood_output: str = "neutral",
     label_projection_threshold: Optional[str] = None,
+    metric_source: str = "unknown",
 ) -> Dict[str, Any]:
     """Build a JSON-safe companion record; it does not alter decision policy."""
     thresholds = {
@@ -158,6 +159,7 @@ def build_fitness_evidence(
         "mood_output": mood_output,
         "mood_label_projected": mood_input != mood_output,
         "label_projection_threshold": label_projection_threshold,
+        "metric_source": metric_source,
         "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "threshold_distances": {
             name: round(abs(float(fused) - threshold), 6)
@@ -202,6 +204,7 @@ def build_fusion_identity_state(
     resources: Optional[Mapping[str, Any]],
     stress_residual: float,
     descent_source: str,
+    metric_source: str,
 ) -> Dict[str, Any]:
     """Canonical state material, keeping latent channels distinct from the scalar."""
     effective_belief = belief or {"truth": 0.5, "deception": 0.5}
@@ -212,6 +215,9 @@ def build_fusion_identity_state(
         "mood_output": mood_output,
         "symbolic_score": channels["symbolic_score"],
         "neural_score": channels["neural_score"],
+        "belief_source": channels.get("belief_source", "derived"),
+        "resource_source": channels.get("resource_source", "derived"),
+        "metric_source": metric_source,
         "ns_fitness": channels["ns_fitness"],
         "mood_dot": fused,
         "signed_eta": channels["signed_eta"],
@@ -255,6 +261,7 @@ def apply_fusion(
     coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
     residual = float(metrics.get("stress_residual", 0.0))
     descent_source = "provided" if "stress_residual" in metrics else "default_zero"
+    metric_source = str(metrics.get("_metric_source", "unknown"))
     residual_normalized = normalized_stress_residual(residual)
     entropy = entropy_with_stress(base_entropy, residual)
     belief = metrics.get("belief") if isinstance(metrics.get("belief"), Mapping) else None
@@ -290,6 +297,7 @@ def apply_fusion(
         mood_input=state_mood,
         mood_output=label,
         label_projection_threshold=label_projection_threshold,
+        metric_source=metric_source,
     )
     identity_state = build_fusion_identity_state(
         mood_input=state_mood,
@@ -304,6 +312,7 @@ def apply_fusion(
         resources=resources,
         stress_residual=residual,
         descent_source=descent_source,
+        metric_source=metric_source,
     )
     state_id = fitness_state_id(identity_state)
     evidence["fusion_state_id"] = state_id
