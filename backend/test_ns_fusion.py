@@ -173,6 +173,37 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(promote_decision(0.6199)["action"], "hold")
         self.assertEqual(promote_decision(0.28, already_promoted=True)["action"], "hold")
         self.assertEqual(promote_decision(0.2799, already_promoted=True)["action"], "demote")
+        self.assertEqual(promote_decision(0.50)["threshold"], 0.62)
+        self.assertEqual(promote_decision(0.50, already_promoted=True)["threshold"], 0.28)
+
+    def test_decision_witness_binds_hysteresis_context_separately_from_fusion_state(self):
+        metrics = {"Core": 0.5, "L5": 0.2, "L2": 0.1}
+        not_yet_promoted = apply_fusion("neutral", metrics, colony={"promoted": False})
+        already_promoted = apply_fusion("neutral", metrics, colony={"promoted": True})
+
+        # The numeric fusion state is identical; the policy context is not.
+        self.assertEqual(not_yet_promoted["fusion_state_id"], already_promoted["fusion_state_id"])
+        self.assertEqual(not_yet_promoted["promote"]["action"], "hold")
+        self.assertEqual(already_promoted["promote"]["action"], "hold")
+        self.assertEqual(not_yet_promoted["promote"]["threshold"], 0.62)
+        self.assertEqual(already_promoted["promote"]["threshold"], 0.28)
+        self.assertNotEqual(
+            not_yet_promoted["promotion_decision_id"],
+            already_promoted["promotion_decision_id"],
+        )
+
+        for result, expected_prior, expected_threshold in (
+            (not_yet_promoted, False, 0.62),
+            (already_promoted, True, 0.28),
+        ):
+            evidence = result["fitness_evidence"]
+            witness = evidence["promotion_decision_witness"]
+            self.assertEqual(fitness_state_id(witness), evidence["promotion_decision_id"])
+            self.assertEqual(evidence["promotion_decision_id"], result["promotion_decision_id"])
+            self.assertEqual(witness["fusion_state_id"], result["fusion_state_id"])
+            self.assertEqual(witness["already_promoted"], expected_prior)
+            self.assertEqual(witness["action"], result["promote"]["action"])
+            self.assertEqual(witness["threshold"], expected_threshold)
 
 
     def test_fusion_state_witness_recomputes_fingerprint(self):
