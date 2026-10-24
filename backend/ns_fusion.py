@@ -184,9 +184,19 @@ def genome_id(seed: str) -> str:
     return f"gn-{digest[:12]}"
 
 
+def _canonical_fitness_state(state: Mapping[str, Any]) -> str:
+    return json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
 def fitness_state_id(state: Mapping[str, Any]) -> str:
-    """Hash the canonical channel/state record, not only its lossy fused scalar."""
-    canonical = json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    """Full SHA-256 fingerprint of the canonical state and companion channels."""
+    canonical = _canonical_fitness_state(state)
+    return "fs-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def fitness_state_genome_id(state: Mapping[str, Any]) -> str:
+    """Backward-sized gn- identifier derived from the complete canonical state."""
+    canonical = _canonical_fitness_state(state)
     return genome_id(canonical)
 
 
@@ -315,6 +325,7 @@ def apply_fusion(
         metric_source=metric_source,
     )
     state_id = fitness_state_id(identity_state)
+    derived_genome_id = fitness_state_genome_id(identity_state)
     evidence["fusion_state_id"] = state_id
     return {
         "ns_fitness": round(fit, 4),
@@ -323,7 +334,7 @@ def apply_fusion(
         "alpha": ALPHA,
         "beta": BETA,
         "promote": decision,
-        "genome_id": colony.get("genome_id") or state_id,
+        "genome_id": colony.get("genome_id") or derived_genome_id,
         "fusion_state_id": state_id,
         "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "fitness_evidence": evidence,
