@@ -66,3 +66,8 @@ This is a data-integrity contract. It does not establish empirical calibration, 
 ## Verification status
 
 Source inspection confirms both the backend scheduler and all three fusion implementations call the common receipt constructor, and the new regression assertions are committed. A direct clone in the current execution environment failed because GitHub DNS resolution was unavailable. Recent GitHub Actions attempts have failed immediately with runner ID 0 and empty step lists; therefore the committed suite, Python compile checks, both Docker builds, and live relay smoke test are not reported as passed.
+
+
+## Follow-on: policy-decision identity (Descent CIV)
+
+Evidence/identity concordance must extend through policy consumption. The fusion-state ID describes the scored input but does not include whether the civilization was already promoted; hysteresis uses that prior state to select the active threshold. Descent CIV adds a separate `pd-` decision fingerprint and fixes the threshold metadata on a hold result. See [Descent CIV](DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md).
