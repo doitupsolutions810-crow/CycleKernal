@@ -1,4 +1,7 @@
+import importlib.util
+import sys
 import unittest
+from pathlib import Path
 
 from ns_fusion import (
     apply_fusion,
@@ -260,6 +263,51 @@ class FusionStressTests(unittest.TestCase):
             fitness_state_id(empty["fitness_evidence"]["fusion_state_witness"]),
             empty["fusion_state_id"],
         )
+
+
+    def test_all_fusion_copies_preserve_absent_vs_empty_semantics(self):
+        root = Path(__file__).resolve().parents[1]
+        copies = (
+            ("backend", root / "backend" / "ns_fusion.py", root / "backend"),
+            ("bridge", root / "src" / "bridge" / "ns_fusion.py", root / "src" / "bridge"),
+            ("master_bridge", root / "master" / "src" / "bridge" / "ns_fusion.py", root / "master" / "src" / "bridge"),
+        )
+        for name, module_path, import_path in copies:
+            with self.subTest(copy=name):
+                sys.path.insert(0, str(import_path))
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        "cyclekernel_missingness_" + name, module_path
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    absent = module.apply_fusion(
+                        "neutral", {"Core": 0.5, "L5": 0.2, "L2": 0.1}
+                    )
+                    empty = module.apply_fusion(
+                        "neutral",
+                        {
+                            "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                            "belief": {}, "resources": {},
+                        },
+                    )
+                    self.assertEqual(
+                        absent["fitness_evidence"]["resource_source"], "default"
+                    )
+                    self.assertEqual(
+                        empty["fitness_evidence"]["resource_source"], "provided"
+                    )
+                    self.assertEqual(
+                        empty["fitness_evidence"]["inputs"]["symbolic"]["attention"], 0.0
+                    )
+                    self.assertEqual(
+                        module.fitness_state_id(
+                            empty["fitness_evidence"]["fusion_state_witness"]
+                        ),
+                        empty["fusion_state_id"],
+                    )
+                finally:
+                    sys.path.pop(0)
 
     def test_nonfinite_score_input_fails_closed(self):
         with self.assertRaises(ValueError):
