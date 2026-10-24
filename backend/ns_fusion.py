@@ -282,6 +282,12 @@ def fitness_state_id(state: Mapping[str, Any]) -> str:
     return "fs-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def promotion_decision_state_id(state: Mapping[str, Any]) -> str:
+    """Full SHA-256 fingerprint with a type-distinct prefix for policy decisions."""
+    canonical = _canonical_fitness_state(state)
+    return "pd-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def fitness_state_genome_id(state: Mapping[str, Any]) -> str:
     """Backward-sized gn- identifier derived from the complete canonical state."""
     canonical = _canonical_fitness_state(state)
@@ -407,7 +413,7 @@ def build_fusion_receipt(
         "action": str(decision["action"]),
         "threshold": float(decision["threshold"]),
     }
-    decision_id = fitness_state_id(decision_witness)
+    decision_id = promotion_decision_state_id(decision_witness)
     evidence["promotion_decision_id"] = decision_id
     evidence["promotion_decision_witness"] = decision_witness
     return {
