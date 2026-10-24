@@ -28,6 +28,28 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertEqual(evidence["metric_source"], "simulation_scheduler")
         self.assertEqual(universe.fusion_log[0]["fitness_evidence"], evidence)
 
+        # The recorded inputs must be the values actually used by the scheduler,
+        # not the evidence builder's fallback defaults.
+        symbolic = evidence["inputs"]["symbolic"]
+        neural = evidence["inputs"]["neural"]
+        witness = evidence["fusion_state_witness"]
+        self.assertEqual(symbolic["truth"], civ["belief"]["truth"])
+        self.assertEqual(symbolic["deception"], civ["belief"]["deception"])
+        self.assertEqual(symbolic["attention"], civ["resources"]["attention"])
+        self.assertEqual(symbolic["compute"], civ["resources"]["compute"])
+        self.assertEqual(symbolic["memory_nodes"], civ["resources"]["memory_nodes"])
+        self.assertTrue(all(symbolic["field_presence"].values()))
+        self.assertEqual(symbolic["belief_source"], "provided")
+        self.assertEqual(symbolic["resource_source"], "provided")
+        self.assertEqual(neural["core"], civ["belief"]["truth"])
+        self.assertEqual(neural["base_entropy"], 0.15)
+        self.assertEqual(neural["coupling"], 0.02)
+        self.assertEqual(witness["belief_truth"], symbolic["truth"])
+        self.assertEqual(witness["resource_attention"], symbolic["attention"])
+        self.assertEqual(witness["resource_compute"], symbolic["compute"])
+        self.assertEqual(witness["resource_memory_nodes"], symbolic["memory_nodes"])
+        self.assertEqual(witness["belief_deception"], symbolic["deception"])
+
     def test_fusion_lineage_is_bounded_and_in_snapshots(self):
         universe = Universe("bounded-lineage")
         universe.add_civilization("test-civ")
