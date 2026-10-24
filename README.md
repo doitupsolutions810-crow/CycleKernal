@@ -367,3 +367,8 @@ For issues, questions, or contributions:
 ---
 
 **Built with ❤️ for simulation and monitoring excellence**
+
+
+## Neuro-symbolic fusion evidence — Descent XCVIII
+
+The NS fusion result now exposes symbolic and neural scores, signed/absolute channel gap, four channel-to-threshold margins, and a promotion-collision diagnostic alongside the existing scalar. This is an observability extension; promotion thresholds remain unchanged. See [Descent XCVIII](docs/GREAT_SCALE_NS_FUSION_DESCENT_XCVIII.md). Run `make build-ns` and `make test-ns`.
