@@ -99,3 +99,8 @@ The fusion contract now distinguishes an absent symbolic mapping (None, which us
 ## Descent CI — field-presence closure
 
 The canonical witness now includes mapping-level presence plus recognized-field presence, and preserves the validated belief.deception value even though the current score does not use it. This distinguishes equal-score inputs with different supplied data. See [Descent CI](DESCENT_CI_WITNESS_COMPLETENESS.md). This enriches the evidence record only; the fitness formula and promotion thresholds are unchanged.
+
+
+## Descent CII — explicit-null closure
+
+The core fusion entry point now distinguishes an omitted mapping key from a present key whose value is `None`/JSON `null`. Omitted keys keep the baseline; supplied mappings are validated and preserved; explicit null/non-mapping values are rejected rather than silently treated as absent. This closes the last non-injective fallback identified after Descent C and CI. See [Descent CII](DESCENT_CII_EXPLICIT_NULL_CLOSURE.md). Scoring and promotion thresholds are unchanged.
