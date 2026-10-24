@@ -7,8 +7,9 @@ import hmac
 import logging
 import os
 import time
+from copy import deepcopy
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 
 import numpy as np
 from flask import Flask, jsonify, request
@@ -71,9 +72,13 @@ class Universe:
         self.max_fusion_log = 500
         # One scheduler-driven Great Scale tick per universe simulation cycle.
         self.descent_engine = DescentEngine(start=1.0, k=0.5)
-        self._descent_state_lock = Lock()
+        self._descent_state_lock = RLock()
 
     def add_civilization(self, civ_id):
+        with self._descent_state_lock:
+            return self._add_civilization_locked(civ_id)
+
+    def _add_civilization_locked(self, civ_id):
         if civ_id not in self.civilizations:
             civ = civ_template(civ_id)
             self.civilizations[civ_id] = civ
@@ -246,6 +251,18 @@ class Universe:
                 "universe_id": self.id,
                 "cycle_count": self.cycle_count,
                 "stress_residual_normalized": snapshot["residualNormalized"],
+            }
+
+    def state_snapshot(self, running=False):
+        """Deep-copied, internally consistent per-universe state at one cycle boundary."""
+        with self._descent_state_lock:
+            return {
+                "id": self.id,
+                "civilizations": deepcopy(self.civilizations),
+                "factions": deepcopy(self.factions),
+                "cycle_count": self.cycle_count,
+                "colony": self._colony_snapshot_locked(),
+                "descent": self.descent_engine.snapshot(running=running),
             }
 
 class CycleKernel:
