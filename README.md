@@ -403,3 +403,8 @@ For issues, questions, or contributions:
 
 
 The Descent CVI guard also runs at both relay ingress parsers, before type information is lost through normalization. Raw booleans, numeric strings, explicit nulls, and overflowing integer inputs cannot become ordinary floating-point metrics. Cross-copy relay parser tests are included; hosted execution remains blocked until a runner is assigned.
+
+
+## Descent CVII — validation frontier
+
+[Descent CVII](docs/DESCENT_CVII_VALIDATION_FRONTIER.md) formalizes the root cause behind the relay-normalization bypass: when a non-injective transform maps different raw types to the same value, downstream validation cannot recover the distinction. Both bridge parsers now validate raw numeric types before float normalization, with cross-copy regressions. Great Scale mapping: System 30 — validation frontier.
