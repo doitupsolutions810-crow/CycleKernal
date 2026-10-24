@@ -208,6 +208,8 @@ class Universe:
             )
             state_id = fitness_state_id(identity_state)
             evidence["fusion_state_id"] = state_id
+            # Store the exact payload hashed above so historical lineage is independently verifiable.
+            evidence["fusion_state_witness"] = identity_state
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
             civ["mood"] = label
