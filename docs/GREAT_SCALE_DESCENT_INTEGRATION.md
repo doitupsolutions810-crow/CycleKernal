@@ -55,3 +55,8 @@ This prevents a reader from observing a new descent tick paired with preceding-c
 ## Descent CVIII — raw-key and alias concordance
 
 The relay boundary now rejects duplicate keys in JSON text before dictionary construction and verifies every supplied spelling of Core/U2/L2/L5. Equal canonical/legacy aliases are accepted, but invalid or conflicting aliases are rejected instead of being silently ignored. See [Descent CVIII](DESCENT_CVIII_ALIAS_CONCORDANCE.md). This closes another pre-scoring information-loss boundary without changing score formulas or Great Scale geometry. Hosted workflow execution is still required to verify the full repository and image builds.
+
+
+## Descent CVIX — one authoritative relay envelope
+
+Relay parsing accepts either direct metrics or a metrics wrapper, but not a wrapped observation plus recognized metric fields at the outer level. This prevents outer fields from being silently discarded while inner metrics win. Ordinary envelope metadata remains allowed. See [Descent CVIX](DESCENT_CVIX_RELAY_ENVELOPE_CLOSURE.md).
