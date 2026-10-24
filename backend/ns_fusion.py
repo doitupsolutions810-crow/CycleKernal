@@ -95,7 +95,10 @@ def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[M
     fit = ns_fitness(core=core, entropy=entropy, coupling=coupling)
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})
-    decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0) and fused >= PROMOTE_THRESHOLD))
+    # FIX: pass the raw promoted flag. The prior conjunction with the promote
+    # threshold made the demote branch unreachable for any previously promoted
+    # colony whose fused score had fallen below DEMOTE_THRESHOLD.
+    decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0)))
     label = state_mood
     if fused >= 0.7 and state_mood == "neutral":
         label = "convergent"
