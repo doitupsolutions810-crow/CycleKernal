@@ -1,0 +1,23 @@
+name: CycleKernel NS fusion checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ns-fusion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run NS fusion regression suite
+        run: make test-ns
+      - name: Compile bridge and simulation Python
+        run: python -m compileall -q src/bridge backend master/src/bridge
