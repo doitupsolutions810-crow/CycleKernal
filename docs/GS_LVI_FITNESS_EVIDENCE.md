@@ -89,3 +89,8 @@ Focused local tests run on isolated copies of the descent and fusion modules pas
 ## Descent XCIX — validity and independently checkable witness
 
 The companion evidence now carries the canonical state witness used to produce `fusion_state_id`. Consumers can recompute the SHA-256 fingerprint from the witness, while recognizing that digest consistency is not source authentication. Belief truth/deception must be finite and in [0,1], and resource counts finite and nonnegative; invalid values fail closed both at relay ingress and in the score function. See [Descent XCIX](DESCENT_XCIX_VALIDITY_WITNESS_CLOSURE.md).
+
+
+## Descent C — typed missingness
+
+The fusion contract now distinguishes an absent symbolic mapping (None, which uses the documented baseline) from an explicitly supplied empty object ({}, which is preserved as provided input). This prevents false source labels and keeps the recorded inputs consistent with the computed score and canonical witness across the backend and both bridge copies. See [Descent C — Typed missingness](DESCENT_C_TYPED_MISSINGNESS.md).
