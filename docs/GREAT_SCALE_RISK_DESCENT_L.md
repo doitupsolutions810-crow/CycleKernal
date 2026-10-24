@@ -84,13 +84,13 @@ Then \(E[P]=\mu\) and \(\operatorname{Var}(P)=v\) while \(x\to1^-\), \(q\to0.137
 
 The open integration branch wires a *different* descent object: a deterministic modular involution/contraction with state \(x_t\), raw residual \(r_t=|x_t-I(x_t)|\), and bounded normalized residual on its configured orbit. That geometric residual is **not** a probability distribution \(P\), and its variance is not automatically the \(v\) in the risk model above.
 
-On the configured interval `x ∈ [1, 8]`, the modular involution is (I(x)=9-x), so the geometric residual is (r_t=|x_t-I(x_t)|=2|x_t-4.5|). The adapter update is (x_{t+1}=4.5+k(x_t-4.5)). For (|k|<1),
+On the configured interval \`x ∈ [1, 8]\`, the modular involution is \(I(x)=9-x\), so the geometric residual is \(r_t=|x_t-I(x_t)|=2|x_t-4.5|\). The adapter update is \(x_{t+1}=4.5+k(x_t-4.5)\). For \(|k|<1\),
 
-[
-V_t=(x_t-4.5)^2,qquad V_{t+1}=k^2V_t,qquad r_{t+1}=|k|r_t.
-]
+\[
+V_t=(x_t-4.5)^2,\qquad V_{t+1}=k^2V_t,\qquad r_{t+1}=|k|r_t.
+\]
 
-With (k=0.5), (V_{t+1}=0.25V_t) and (r_{t+1}=0.5r_t): a deterministic contraction/Lyapunov-style convergence certificate on this configured interval. It is **not** a bound on the stochastic logarithmic risk (J(P)). Geometric convergence and probabilistic tail control are separate axes and must not share a metric merely because both are called “descent.”
+With \(k=0.5\), \(V_{t+1}=0.25V_t\) and \(r_{t+1}=0.5r_t\): a deterministic contraction/Lyapunov-style convergence certificate on this configured interval. It is **not** a bound on the stochastic logarithmic risk \(J(P)\). Geometric convergence and probabilistic tail control are separate axes and must not share a metric merely because both are called “descent.”
 
 Therefore:
 
