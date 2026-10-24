@@ -253,6 +253,32 @@ class FusionStressTests(unittest.TestCase):
                 core=0.5, entropy=0.2, coupling=0.1,
             )
 
+    def test_json_metric_types_reject_booleans_and_numeric_strings(self):
+        resources = {"attention": 50, "compute": 20, "memory_nodes": 1}
+        for invalid in (True, False, "0.5"):
+            with self.subTest(field="belief.truth", value=invalid):
+                with self.assertRaisesRegex(ValueError, "belief.truth must be a JSON number"):
+                    fitness_channels(
+                        belief={"truth": invalid}, resources=resources,
+                        core=0.5, entropy=0.2, coupling=0.1,
+                    )
+        for invalid in (True, "50"):
+            with self.subTest(field="resources.attention", value=invalid):
+                with self.assertRaisesRegex(ValueError, "resources.attention must be a JSON number"):
+                    fitness_channels(
+                        belief={"truth": 0.5},
+                        resources={"attention": invalid, "compute": 20, "memory_nodes": 1},
+                        core=0.5, entropy=0.2, coupling=0.1,
+                    )
+        for field, invalid in (("Core", True), ("L5", "0.2"), ("L2", False), ("stress_residual", True)):
+            with self.subTest(field=field, value=invalid):
+                with self.assertRaisesRegex(ValueError, rf"{field if field != 'stress_residual' else field} must be a JSON number"):
+                    apply_fusion("neutral", {field: invalid})
+        with self.assertRaisesRegex(ValueError, "core must be a JSON number"):
+            neural_score(True, 0.2, 0.1)
+        with self.assertRaisesRegex(ValueError, "coupling must be a JSON number"):
+            neural_score(0.5, 0.2, "0.1")
+
 
     def test_explicit_empty_symbolic_inputs_do_not_collapse_to_absent_defaults(self):
         absent = fitness_channels(core=0.5, entropy=0.2, coupling=0.1)
@@ -465,6 +491,18 @@ class FusionStressTests(unittest.TestCase):
                         with self.subTest(copy=name, field=field):
                             with self.assertRaisesRegex(ValueError, rf"{field} must be a mapping"):
                                 module.apply_fusion("neutral", {**baseline, field: None})
+
+                    # JSON booleans and coercible strings must not bypass the numeric schema.
+                    for invalid in (True, False, "0.5"):
+                        with self.subTest(copy=name, invalid=invalid):
+                            with self.assertRaisesRegex(ValueError, "belief.truth must be a JSON number"):
+                                module.fitness_channels(
+                                    belief={"truth": invalid},
+                                    resources={"attention": 50, "compute": 20, "memory_nodes": 1},
+                                    core=0.5, entropy=0.2, coupling=0.1,
+                                )
+                            with self.assertRaisesRegex(ValueError, "Core must be a JSON number"):
+                                module.apply_fusion("neutral", {"Core": invalid})
                 finally:
                     sys.path.pop(0)
 
