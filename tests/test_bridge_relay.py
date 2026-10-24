@@ -52,6 +52,13 @@ class RelayProvenanceTests(unittest.TestCase):
         self.assertEqual(metrics["resources"]["compute"], 30)
 
 
+    def test_rejects_explicit_null_symbolic_objects(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        for field in ("belief", "resources"):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, f"relay {field} must be a JSON object"):
+                    normalize_relay_metrics({**base, field: None})
+
     def test_rejects_out_of_domain_belief_and_resource_values(self):
         base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
         with self.assertRaisesRegex(ValueError, "belief.truth must be finite and in"):
