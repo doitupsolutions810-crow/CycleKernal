@@ -17,6 +17,8 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
         self.assertTrue(universe.fusion_log)
         self.assertEqual(universe.fusion_log[-1]["civ_id"], "test-civ")
+        self.assertEqual(universe.fusion_log[-1]["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(universe.fusion_log[-1]["fitness_evidence"], evidence)
 
     def test_lineage_history_is_bounded(self):
@@ -52,6 +54,8 @@ class FitnessLineageTests(unittest.TestCase):
         promoted_events = [event for event in universe.promote_log if event["action"] == "promote"]
         self.assertEqual(len(promoted_events), 1, "high-evidence test fixture should promote on the first cycle")
         evidence = promoted_events[0]["fitness_evidence"]
+        self.assertEqual(promoted_events[0]["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(evidence, civ["fitness_evidence"])
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
         self.assertIn("signed_eta", evidence)
