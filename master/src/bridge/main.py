@@ -37,6 +37,11 @@ app.add_middleware(
 )
 
 EXPECTED_DESCENT_SCHEMA = "great-scale.descent/v0.4.2"
+RELAY_METRIC_INPUT_KEYS = frozenset({
+    "Core", "core", "U2", "u2", "L2", "l2", "coupling",
+    "L5", "l5", "entropy", "stress_residual", "descent_schema",
+    "belief", "resources",
+})
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
@@ -62,9 +67,21 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
             raise ValueError("relay message must be valid JSON") from exc
     if not isinstance(payload, Mapping):
         raise ValueError("relay message must be a JSON object")
-    raw_metrics = payload.get("metrics", payload)
-    if not isinstance(raw_metrics, Mapping):
-        raise ValueError("relay 'metrics' field must be a JSON object")
+    if "metrics" in payload:
+        raw_metrics = payload["metrics"]
+        if not isinstance(raw_metrics, Mapping):
+            raise ValueError("relay 'metrics' field must be a JSON object")
+        shadow_fields = sorted(RELAY_METRIC_INPUT_KEYS.intersection(payload))
+        if shadow_fields:
+            fields = ", ".join(shadow_fields)
+            raise ValueError(
+                "wrapped relay payload must keep metric fields inside 'metrics': "
+                + fields
+            )
+    else:
+        raw_metrics = payload
+        if not isinstance(raw_metrics, Mapping):
+            raise ValueError("relay message must be a JSON object")
 
     aliases = {
         "Core": ("Core", "core"),
