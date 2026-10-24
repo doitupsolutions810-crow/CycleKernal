@@ -43,3 +43,10 @@ The CognitiveBridge variants also consume `RELAY_URL` as a real WebSocket source
 Great Scale residuals forwarded through the relay require the exact `great-scale.descent/v0.4.2` schema and the configured [0,7] residual domain. A relay carrying only LoopMem mood metrics does not acquire a fabricated Great Scale residual; its evidence marks `descent_source=default_zero`. Simulation scheduler events mark the residual as `simulation_scheduler`.
 
 The companion-channel and source-provenance changes are covered in the stacked PR and workflow, but deployment claims require successful hosted tests and an actual configured live-relay smoke run. No empirical/physical law is claimed.
+
+
+## Cycle-atomic evidence snapshots
+
+Each simulation cycle holds the universe snapshot lock across the Great Scale descent tick, fusion calculations, and lineage writes. Colony and descent snapshot readers take the same lock; colony snapshots include the cycle counter. This prevents a reader from seeing a new descent tick paired with the previous cycle's fusion evidence.
+
+The guarantee is per universe. A single transaction spanning multiple universes is not claimed, and relayed metric provenance remains a label rather than cryptographic source authentication.
