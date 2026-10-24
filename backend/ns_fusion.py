@@ -71,6 +71,23 @@ def validate_symbolic_inputs(
                 raise ValueError(f"resources.{field} must be finite and nonnegative")
 
 
+
+def symbolic_input_presence(
+    belief: Optional[Mapping[str, Any]] = None,
+    resources: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, bool]:
+    """Report mapping and recognized-field presence separately from effective values."""
+    return {
+        "belief_mapping": belief is not None,
+        "belief_truth": belief is not None and "truth" in belief,
+        "belief_deception": belief is not None and "deception" in belief,
+        "resources_mapping": resources is not None,
+        "resource_attention": resources is not None and "attention" in resources,
+        "resource_compute": resources is not None and "compute" in resources,
+        "resource_memory_nodes": resources is not None and "memory_nodes" in resources,
+    }
+
+
 def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> float:
     """Constraint side: truth alignment plus resource viability."""
     validate_symbolic_inputs(belief, resources)
@@ -212,6 +229,8 @@ def build_fitness_evidence(
                 "attention": float(effective_resources.get("attention", 0.0)),
                 "compute": float(effective_resources.get("compute", 0.0)),
                 "memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
+                "deception": float(effective_belief.get("deception", 0.5)),
+                "field_presence": symbolic_input_presence(belief, resources),
                 "belief_source": channels.get("belief_source", "derived"),
                 "resource_source": channels.get("resource_source", "derived"),
             },
@@ -305,6 +324,8 @@ def build_fusion_identity_state(
         "resource_attention": float(effective_resources.get("attention", 0.0)),
         "resource_compute": float(effective_resources.get("compute", 0.0)),
         "resource_memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
+        "belief_deception": float(effective_belief.get("deception", 0.5)),
+        "input_presence": symbolic_input_presence(belief, resources),
         "core": core,
         "base_entropy": base_entropy,
         "neural_entropy_used": neural_entropy_used,
