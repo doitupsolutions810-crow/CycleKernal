@@ -18,7 +18,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from descent_engine import DescentEngine, entropy_with_stress
-from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fitness_evidence, build_fusion_identity_state, fitness_state_id, promote_decision)
+from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fusion_receipt, promote_decision)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,7 +174,7 @@ class Universe:
             elif fused < 0.30 and mood != "survival":
                 label = "survival"
                 label_projection_threshold = "survival_label"
-            evidence = build_fitness_evidence(
+            receipt = build_fusion_receipt(
                 channels,
                 fused,
                 stress_residual=residual,
@@ -191,25 +191,8 @@ class Universe:
                 belief=civ["belief"],
                 resources=civ["resources"],
             )
-            identity_state = build_fusion_identity_state(
-                mood_input=mood,
-                mood_output=label,
-                channels=channels,
-                fused=fused,
-                core=float(civ["belief"]["truth"]),
-                base_entropy=base_entropy,
-                neural_entropy_used=entropy,
-                coupling=0.08 if mood == "convergent" else 0.02,
-                belief=civ["belief"],
-                resources=civ["resources"],
-                stress_residual=residual,
-                descent_source="simulation_scheduler",
-                metric_source="simulation_scheduler",
-            )
-            state_id = fitness_state_id(identity_state)
-            evidence["fusion_state_id"] = state_id
-            # Store the exact payload hashed above so historical lineage is independently verifiable.
-            evidence["fusion_state_witness"] = identity_state
+            state_id = receipt["fusion_state_id"]
+            evidence = receipt["fitness_evidence"]
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
             civ["mood"] = label
