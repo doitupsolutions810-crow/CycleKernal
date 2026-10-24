@@ -109,3 +109,8 @@ The core fusion entry point now distinguishes an omitted mapping key from a pres
 ## Descent CIII — evidence/identity concordance
 
 A common `build_fusion_receipt` constructor now creates the evidence projection and canonical witness together. It is used by both bridge/backend fusion and the simulation scheduler; the scheduler passes the same live belief/resources and neural context it scored, and the returned evidence includes the exact witness used to compute its digest. This addresses a source-level mismatch in which scheduler evidence could display defaults and false field-presence flags despite a fingerprint built from live inputs. See [Descent CIII](DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md). Scoring and policy thresholds remain unchanged; full hosted tests/builds are still pending actual runner execution.
+
+
+## Descent CIV — promotion-context closure
+
+Promotion is stateful hysteresis: the upper threshold `0.62` applies to an unpromoted civilization, whereas the lower threshold `0.28` governs demotion of an already-promoted one. A held, already-promoted state now reports `0.28` as its active threshold. The canonical decision witness and type-distinct `pd-` digest are stored separately from the `fs-` fusion-state fingerprint and included in simulation lineage and bridge responses. This preserves the legacy fitness score and policy actions while making the decision context auditable. See [Descent CIV](DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md).
