@@ -18,7 +18,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from descent_engine import DescentEngine, entropy_with_stress
-from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fusion_receipt, promote_decision)
+from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fusion_receipt)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ def civ_template(civ_id):
         "mood_dot": 0.5,
         "mood": "neutral",
         "fusion_state_id": "",
+        "promotion_decision_id": "",
         "fitness_evidence": {},
         "created_at": datetime.now().isoformat(),
     }
@@ -113,6 +114,7 @@ class Universe:
                     "id": c["id"],
                     "genome_id": c.get("genome_id"),
                     "fusion_state_id": c.get("fusion_state_id", ""),
+                    "promotion_decision_id": c.get("promotion_decision_id", ""),
                     "state": c.get("state"),
                     "promoted": c.get("promoted", False),
                     "ns_fitness": c.get("ns_fitness", 0.0),
@@ -165,7 +167,7 @@ class Universe:
             )
             fit = channels["ns_fitness"]
             fused = fuse_mood(fit, mood)
-            decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
+            already_promoted = bool(civ.get("promoted"))
             label = mood
             label_projection_threshold = None
             if fused >= 0.70 and mood == "neutral":
@@ -190,13 +192,17 @@ class Universe:
                 coupling=0.08 if mood == "convergent" else 0.02,
                 belief=civ["belief"],
                 resources=civ["resources"],
+                already_promoted=already_promoted,
             )
             state_id = receipt["fusion_state_id"]
             evidence = receipt["fitness_evidence"]
+            decision = receipt["decision"]
+            promotion_decision_id = receipt["promotion_decision_id"]
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
             civ["mood"] = label
             civ["fusion_state_id"] = state_id
+            civ["promotion_decision_id"] = promotion_decision_id
             civ["fitness_evidence"] = evidence
             civ["stress_residual"] = residual
             civ["stress_residual_normalized"] = round(residual / 7.0, 8)
@@ -206,6 +212,7 @@ class Universe:
                 "civ_id": civ["id"],
                 "genome_id": civ.get("genome_id", ""),
                 "fusion_state_id": state_id,
+                "promotion_decision_id": promotion_decision_id,
                 "ns_fitness": round(fit, 4),
                 "mood_dot": round(fused, 4),
                 "action": decision["action"],
@@ -218,13 +225,13 @@ class Universe:
             if decision["action"] == "promote":
                 civ["promoted"] = True
                 civ["state"] = "promoted"
-                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "fitness_evidence": evidence})
+                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "promotion_decision_id": promotion_decision_id, "fitness_evidence": evidence})
                 if len(self.promote_log) > self.max_promotion_log:
                     del self.promote_log[:-self.max_promotion_log]
             elif decision["action"] == "demote":
                 civ["promoted"] = False
                 civ["state"] = "active"
-                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "fitness_evidence": evidence})
+                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "promotion_decision_id": promotion_decision_id, "fitness_evidence": evidence})
                 if len(self.promote_log) > self.max_promotion_log:
                     del self.promote_log[:-self.max_promotion_log]
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
