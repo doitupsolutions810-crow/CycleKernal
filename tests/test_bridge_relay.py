@@ -1,3 +1,4 @@
+import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -36,6 +37,61 @@ class RelayProvenanceTests(unittest.TestCase):
             normalize_relay_metrics({"Core": float("nan"), "U2": 0.2, "L2": 0.03, "L5": 0.7})
         with self.assertRaisesRegex(ValueError, "finite and in"):
             normalize_relay_metrics({"Core": 0.4, "U2": 0.2, "L2": 1.1, "L5": 0.7})
+
+    def test_rejects_boolean_and_numeric_string_fields_before_normalization(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        for invalid in (True, False, "0.5"):
+            with self.subTest(field="Core", value=invalid):
+                with self.assertRaisesRegex(ValueError, "relay metric Core must be a JSON number"):
+                    normalize_relay_metrics({**base, "Core": invalid})
+        for invalid in (True, "0.03"):
+            with self.subTest(field="L2", value=invalid):
+                with self.assertRaisesRegex(ValueError, "relay metric L2 must be a JSON number"):
+                    normalize_relay_metrics({**base, "L2": invalid})
+        residual_payload = {
+            **base,
+            "stress_residual": True,
+            "descent_schema": "great-scale.descent/v0.4.2",
+        }
+        with self.assertRaisesRegex(ValueError, "relay stress_residual must be a JSON number"):
+            normalize_relay_metrics(residual_payload)
+        with self.assertRaisesRegex(ValueError, "relay metric Core must be finite"):
+            normalize_relay_metrics({**base, "Core": 10 ** 10000})
+
+    def test_numeric_type_admission_matches_both_bridge_parsers(self):
+        root = Path(__file__).resolve().parents[1]
+        bridge_dirs = (
+            ("primary", root / "src" / "bridge"),
+            ("master", root / "master" / "src" / "bridge"),
+        )
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        module_names = ("traits", "ns_fusion", "descent_engine")
+        for name, bridge_dir in bridge_dirs:
+            with self.subTest(bridge=name):
+                saved_modules = {key: sys.modules.pop(key, None) for key in module_names}
+                sys.path.insert(0, str(bridge_dir))
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        f"cyclekernel_{name}_relay_main", bridge_dir / "main.py"
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    for invalid in (True, False, "0.5"):
+                        with self.subTest(bridge=name, value=invalid):
+                            with self.assertRaisesRegex(ValueError, "relay metric Core must be a JSON number"):
+                                module.normalize_relay_metrics({**base, "Core": invalid})
+                    with self.assertRaisesRegex(ValueError, "relay stress_residual must be a JSON number"):
+                        module.normalize_relay_metrics({
+                            **base,
+                            "stress_residual": True,
+                            "descent_schema": "great-scale.descent/v0.4.2",
+                        })
+                finally:
+                    sys.path.pop(0)
+                    for key in module_names:
+                        sys.modules.pop(key, None)
+                        if saved_modules[key] is not None:
+                            sys.modules[key] = saved_modules[key]
 
     def test_preserves_optional_descent_and_symbolic_inputs(self):
         payload = {
