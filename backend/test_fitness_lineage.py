@@ -1,7 +1,7 @@
 import unittest
 
 from simulation_core import Universe
-from ns_fusion import fitness_state_id
+from ns_fusion import fitness_state_id, promotion_decision_state_id
 
 
 class FitnessLineageTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(universe.fusion_log[-1]["fitness_evidence"], evidence)
         self.assertEqual(civ["promotion_decision_id"], evidence["promotion_decision_id"])
         self.assertEqual(
-            fitness_state_id(evidence["promotion_decision_witness"]),
+            promotion_decision_state_id(evidence["promotion_decision_witness"]),
             evidence["promotion_decision_id"],
         )
         self.assertEqual(
