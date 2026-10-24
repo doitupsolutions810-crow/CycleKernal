@@ -154,6 +154,7 @@ class Universe:
                 stress_residual=residual,
                 stress_residual_normalized=residual / 7.0,
                 neural_entropy_used=entropy,
+                descent_source="simulation_scheduler",
             )
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
@@ -169,6 +170,7 @@ class Universe:
                 "ns_fitness": round(fit, 4),
                 "mood_dot": round(fused, 4),
                 "action": decision["action"],
+                "metric_source": "simulation_scheduler",
                 "fitness_evidence": evidence,
             }
             self.fusion_log.append(fusion_event)
