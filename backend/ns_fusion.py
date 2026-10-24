@@ -363,14 +363,13 @@ def apply_fusion(
     metric_source = str(metrics.get("_metric_source", "unknown"))
     residual_normalized = normalized_stress_residual(residual)
     entropy = entropy_with_stress(base_entropy, residual)
-    belief_raw = metrics.get("belief")
-    resources_raw = metrics.get("resources")
-    if belief_raw is not None and not isinstance(belief_raw, Mapping):
+    # Omitted keys mean absent; explicit null/non-mapping values are malformed.
+    if "belief" in metrics and not isinstance(metrics["belief"], Mapping):
         raise ValueError("belief must be a mapping")
-    if resources_raw is not None and not isinstance(resources_raw, Mapping):
+    if "resources" in metrics and not isinstance(metrics["resources"], Mapping):
         raise ValueError("resources must be a mapping")
-    belief = belief_raw if isinstance(belief_raw, Mapping) else None
-    resources = resources_raw if isinstance(resources_raw, Mapping) else None
+    belief = metrics["belief"] if "belief" in metrics else None
+    resources = metrics["resources"] if "resources" in metrics else None
 
     channels = fitness_channels(
         belief=belief,
