@@ -22,6 +22,21 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(fitness_state_id(evidence["fusion_state_witness"]), civ["fusion_state_id"])
         self.assertEqual(universe.fusion_log[-1]["fitness_evidence"], evidence)
+        self.assertEqual(civ["promotion_decision_id"], evidence["promotion_decision_id"])
+        self.assertEqual(
+            fitness_state_id(evidence["promotion_decision_witness"]),
+            evidence["promotion_decision_id"],
+        )
+        self.assertEqual(
+            evidence["promotion_decision_witness"]["action"],
+            universe.fusion_log[-1]["action"],
+        )
+        self.assertFalse(evidence["promotion_decision_witness"]["already_promoted"])
+        self.assertEqual(evidence["promotion_decision_witness"]["threshold"], 0.62)
+        self.assertEqual(
+            universe.fusion_log[-1]["promotion_decision_id"],
+            evidence["promotion_decision_id"],
+        )
         symbolic = evidence["inputs"]["symbolic"]
         witness = evidence["fusion_state_witness"]
         self.assertTrue(all(symbolic["field_presence"].values()))
@@ -72,6 +87,14 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(len(promoted_events), 1, "high-evidence test fixture should promote on the first cycle")
         evidence = promoted_events[0]["fitness_evidence"]
         self.assertEqual(promoted_events[0]["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(promoted_events[0]["promotion_decision_id"], civ["promotion_decision_id"])
+        self.assertEqual(evidence["promotion_decision_witness"]["action"], "promote")
+        self.assertFalse(evidence["promotion_decision_witness"]["already_promoted"])
+        self.assertEqual(evidence["promotion_decision_witness"]["threshold"], 0.62)
+        self.assertEqual(
+            fitness_state_id(evidence["promotion_decision_witness"]),
+            evidence["promotion_decision_id"],
+        )
         self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(evidence, civ["fitness_evidence"])
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
