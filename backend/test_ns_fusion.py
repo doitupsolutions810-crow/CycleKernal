@@ -218,6 +218,49 @@ class FusionStressTests(unittest.TestCase):
                 core=0.5, entropy=0.2, coupling=0.1,
             )
 
+
+    def test_explicit_empty_symbolic_inputs_do_not_collapse_to_absent_defaults(self):
+        absent = fitness_channels(core=0.5, entropy=0.2, coupling=0.1)
+        explicit_empty = fitness_channels(
+            belief={}, resources={}, core=0.5, entropy=0.2, coupling=0.1
+        )
+        self.assertEqual(absent["belief_source"], "default")
+        self.assertEqual(absent["resource_source"], "default")
+        self.assertEqual(explicit_empty["belief_source"], "provided")
+        self.assertEqual(explicit_empty["resource_source"], "provided")
+        self.assertAlmostEqual(absent["symbolic_score"], 0.4325)
+        self.assertAlmostEqual(explicit_empty["symbolic_score"], 0.275)
+        self.assertNotEqual(absent["symbolic_score"], explicit_empty["symbolic_score"])
+
+        result = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.2, "L2": 0.1, "belief": {}, "resources": {}},
+        )
+        evidence = result["fitness_evidence"]
+        witness = evidence["fusion_state_witness"]
+        self.assertEqual(evidence["belief_source"], "provided")
+        self.assertEqual(evidence["resource_source"], "provided")
+        self.assertEqual(evidence["inputs"]["symbolic"]["truth"], 0.5)
+        self.assertEqual(evidence["inputs"]["symbolic"]["attention"], 0.0)
+        self.assertEqual(witness["resource_attention"], 0.0)
+        self.assertEqual(fitness_state_id(witness), result["fusion_state_id"])
+
+    def test_absent_and_empty_inputs_have_distinct_state_fingerprints(self):
+        absent = apply_fusion("neutral", {"Core": 0.5, "L5": 0.2, "L2": 0.1})
+        empty = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.2, "L2": 0.1, "belief": {}, "resources": {}},
+        )
+        self.assertNotEqual(absent["fusion_state_id"], empty["fusion_state_id"])
+        self.assertEqual(
+            fitness_state_id(absent["fitness_evidence"]["fusion_state_witness"]),
+            absent["fusion_state_id"],
+        )
+        self.assertEqual(
+            fitness_state_id(empty["fitness_evidence"]["fusion_state_witness"]),
+            empty["fusion_state_id"],
+        )
+
     def test_nonfinite_score_input_fails_closed(self):
         with self.assertRaises(ValueError):
             neural_score(float("nan"), 0.2, 0.1)
