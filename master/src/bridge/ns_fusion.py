@@ -188,6 +188,49 @@ def fitness_state_id(state: Mapping[str, Any]) -> str:
     return genome_id(canonical)
 
 
+def build_fusion_identity_state(
+    *,
+    mood_input: str,
+    mood_output: str,
+    channels: Mapping[str, Any],
+    fused: float,
+    core: float,
+    base_entropy: float,
+    neural_entropy_used: float,
+    coupling: float,
+    belief: Optional[Mapping[str, Any]],
+    resources: Optional[Mapping[str, Any]],
+    stress_residual: float,
+    descent_source: str,
+) -> Dict[str, Any]:
+    """Canonical state material, keeping latent channels distinct from the scalar."""
+    effective_belief = belief or {"truth": 0.5, "deception": 0.5}
+    effective_resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
+    return {
+        "schema": FUSION_STATE_ID_SCHEMA,
+        "mood_input": mood_input,
+        "mood_output": mood_output,
+        "symbolic_score": channels["symbolic_score"],
+        "neural_score": channels["neural_score"],
+        "ns_fitness": channels["ns_fitness"],
+        "mood_dot": fused,
+        "signed_eta": channels["signed_eta"],
+        "symbolic_neural_ratio": channels["symbolic_neural_ratio"],
+        "ratio_defined": channels["ratio_defined"],
+        "belief_truth": float(effective_belief.get("truth", 0.5)),
+        "resource_attention": float(effective_resources.get("attention", 0.0)),
+        "resource_compute": float(effective_resources.get("compute", 0.0)),
+        "resource_memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
+        "core": core,
+        "base_entropy": base_entropy,
+        "neural_entropy_used": neural_entropy_used,
+        "coupling": coupling,
+        "stress_residual": stress_residual,
+        "descent_source": descent_source,
+        "descent_schema": DESCENT_SCHEMA,
+    }
+
+
 def colony_genome(members: list) -> str:
     blob = "|".join(sorted(str(m) for m in members)) or "empty-colony"
     return genome_id(f"colony:{blob}")
@@ -248,32 +291,22 @@ def apply_fusion(
         mood_output=label,
         label_projection_threshold=label_projection_threshold,
     )
-    effective_belief = belief or {"truth": 0.5, "deception": 0.5}
-    effective_resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
-    identity_state = {
-        "schema": FUSION_STATE_ID_SCHEMA,
-        "mood_input": state_mood,
-        "mood_output": label,
-        "symbolic_score": channels["symbolic_score"],
-        "neural_score": channels["neural_score"],
-        "ns_fitness": fit,
-        "mood_dot": fused,
-        "signed_eta": channels["signed_eta"],
-        "symbolic_neural_ratio": channels["symbolic_neural_ratio"],
-        "ratio_defined": channels["ratio_defined"],
-        "belief_truth": float(effective_belief.get("truth", 0.5)),
-        "resource_attention": float(effective_resources.get("attention", 0.0)),
-        "resource_compute": float(effective_resources.get("compute", 0.0)),
-        "resource_memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
-        "core": core,
-        "base_entropy": base_entropy,
-        "neural_entropy_used": entropy,
-        "coupling": coupling,
-        "stress_residual": residual,
-        "descent_source": descent_source,
-        "descent_schema": DESCENT_SCHEMA,
-    }
+    identity_state = build_fusion_identity_state(
+        mood_input=state_mood,
+        mood_output=label,
+        channels=channels,
+        fused=fused,
+        core=core,
+        base_entropy=base_entropy,
+        neural_entropy_used=entropy,
+        coupling=coupling,
+        belief=belief,
+        resources=resources,
+        stress_residual=residual,
+        descent_source=descent_source,
+    )
     state_id = fitness_state_id(identity_state)
+    evidence["fusion_state_id"] = state_id
     return {
         "ns_fitness": round(fit, 4),
         "mood_dot": round(fused, 4),
