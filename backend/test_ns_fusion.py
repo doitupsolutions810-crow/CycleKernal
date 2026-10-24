@@ -103,6 +103,27 @@ class FusionStressTests(unittest.TestCase):
         self.assertNotEqual(fitness_state_id(left_state), fitness_state_id(right_state))
         self.assertEqual(fitness_state_id(left_state), fitness_state_id(left_state))
 
+    def test_source_change_changes_full_fingerprint_without_changing_legacy_score(self):
+        channels = summarize_fitness_channels(0.6, 0.6)
+        common = {
+            "mood_input": "neutral",
+            "mood_output": "neutral",
+            "channels": channels,
+            "fused": fuse_mood(channels["ns_fitness"], "neutral"),
+            "core": 0.6,
+            "base_entropy": 0.4,
+            "neural_entropy_used": 0.4,
+            "coupling": 0.02,
+            "belief": {"truth": 0.6},
+            "resources": {"attention": 90, "compute": 20, "memory_nodes": 2},
+            "stress_residual": 0.0,
+            "descent_source": "default_zero",
+        }
+        relay = build_fusion_identity_state(**common, metric_source="relay")
+        synthetic = build_fusion_identity_state(**common, metric_source="synthetic")
+        self.assertEqual(relay["ns_fitness"], synthetic["ns_fitness"])
+        self.assertNotEqual(fitness_state_id(relay), fitness_state_id(synthetic))
+
     def test_mood_threshold_projection_is_an_explicit_companion_event(self):
         high = apply_fusion(
             "neutral",
