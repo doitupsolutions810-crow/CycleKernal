@@ -191,6 +191,12 @@ def apply_fusion(
     if not isinstance(resources, Mapping):
         resources = None
 
+    symbolic_complete = isinstance(belief, Mapping) and isinstance(resources, Mapping)
+    neural_complete = (
+        ("Core" in metrics or "core" in metrics)
+        and ("L5" in metrics or "entropy" in metrics)
+        and ("L2" in metrics or "coupling" in metrics)
+    )
     evidence = ns_components(
         belief=belief,
         resources=resources,
@@ -198,6 +204,17 @@ def apply_fusion(
         entropy=entropy,
         coupling=coupling,
     )
+    channel_provenance = {
+        "symbolic": {
+            "source": "belief+resources" if symbolic_complete else "defaulted_inputs",
+            "complete": symbolic_complete,
+        },
+        "neural": {
+            "source": "Core+L5+L2" if neural_complete else "partial_or_defaulted_inputs",
+            "complete": neural_complete,
+        },
+    }
+    evidence["channel_provenance"] = channel_provenance
     fit = evidence["ns_fitness"]
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})
@@ -224,6 +241,7 @@ def apply_fusion(
         "threshold_distances": evidence["threshold_distances"],
         "mood_threshold_distances": mood_threshold_distances,
         "fusion_evidence": evidence,
+        "channel_provenance": channel_provenance,
         "mood": label,
         "alpha": ALPHA,
         "beta": BETA,
