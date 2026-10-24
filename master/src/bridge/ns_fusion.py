@@ -1,18 +1,23 @@
-"""Neuro-symbolic fitness fused into live mood and colony promotion.
+"""Neuro-symbolic fitness fusion with an explicit companion evidence channel.
 
-mood_dot = clip(alpha * ns_fitness + beta * mood_score)
-Promotion is gated on mood_dot, not on raw symbolic score alone.
+The legacy scalar ns_fitness = sqrt(symbolic_score * neural_score) is retained
+for compatibility, but it is non-injective: different channel pairs can map to
+the same scalar. fitness_evidence preserves the inputs, signed disagreement,
+ratio, and margins to every current decision threshold.
 """
-
 from __future__ import annotations
 
 import hashlib
+from math import sqrt
 from typing import Any, Dict, Mapping, Optional
 
 ALPHA = 0.65
 BETA = 0.35
 PROMOTE_THRESHOLD = 0.62
 DEMOTE_THRESHOLD = 0.28
+CONVERGENT_LABEL_THRESHOLD = 0.70
+SURVIVAL_LABEL_THRESHOLD = 0.30
+FITNESS_EVIDENCE_SCHEMA = "cyclekernel.fusion-evidence/v1"
 
 MOOD_SCORE = {
     "survival": 0.15,
@@ -34,7 +39,6 @@ def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> f
     compute = float(resources.get("compute", 0.0))
     memory_nodes = float(resources.get("memory_nodes", 0.0))
     viable = _clip((attention / 150.0) * 0.45 + (compute / 40.0) * 0.35 + (memory_nodes / 8.0) * 0.20)
-    # Symbolic preference: high truth and enough resources to act on it.
     return _clip(0.55 * truth + 0.45 * viable)
 
 
@@ -45,6 +49,44 @@ def neural_score(core: float, entropy: float, coupling: float) -> float:
     return _clip(0.5 * _clip(core) + 0.3 * stability + 0.2 * bind)
 
 
+def summarize_fitness_channels(symbolic: float, neural: float) -> Dict[str, Any]:
+    """Keep both coordinates of the fitness point beside its legacy projection."""
+    symbolic = _clip(symbolic)
+    neural = _clip(neural)
+    ratio_defined = neural > 0.0
+    return {
+        "symbolic_score": symbolic,
+        "neural_score": neural,
+        "ns_fitness": sqrt(symbolic * neural),
+        "signed_eta": symbolic - neural,
+        "absolute_channel_gap": abs(symbolic - neural),
+        "symbolic_neural_ratio": symbolic / neural if ratio_defined else None,
+        "ratio_defined": ratio_defined,
+    }
+
+
+def fitness_channels(
+    *,
+    belief: Optional[Mapping[str, Any]] = None,
+    resources: Optional[Mapping[str, Any]] = None,
+    core: float = 0.5,
+    entropy: float = 0.0,
+    coupling: float = 0.0,
+) -> Dict[str, Any]:
+    """Return the geometric-mean scalar plus its symbolic/neural coordinates."""
+    belief_was_provided = belief is not None
+    resources_were_provided = resources is not None
+    belief = belief or {"truth": 0.5, "deception": 0.5}
+    resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
+    symbolic = symbolic_score(belief, resources)
+    neural = neural_score(core, entropy, coupling)
+    return {
+        **summarize_fitness_channels(symbolic, neural),
+        "belief_source": "provided" if belief_was_provided else "default",
+        "resource_source": "provided" if resources_were_provided else "default",
+    }
+
+
 def ns_fitness(
     *,
     belief: Optional[Mapping[str, Any]] = None,
@@ -53,12 +95,44 @@ def ns_fitness(
     entropy: float = 0.0,
     coupling: float = 0.0,
 ) -> float:
-    belief = belief or {"truth": 0.5, "deception": 0.5}
-    resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
-    symbolic = symbolic_score(belief, resources)
-    neural = neural_score(core, entropy, coupling)
-    # Tight fusion: both sides must agree. Geometric mean punishes a one-sided spike.
-    return _clip((symbolic * neural) ** 0.5)
+    """Backward-compatible scalar wrapper; richer callers should use fitness_channels."""
+    return fitness_channels(
+        belief=belief, resources=resources, core=core, entropy=entropy, coupling=coupling
+    )["ns_fitness"]
+
+
+def build_fitness_evidence(channels: Mapping[str, Any], fused: float) -> Dict[str, Any]:
+    """Create a JSON-safe diagnostic record without changing the promote policy."""
+    thresholds = {
+        "promote": PROMOTE_THRESHOLD,
+        "demote": DEMOTE_THRESHOLD,
+        "convergent_label": CONVERGENT_LABEL_THRESHOLD,
+        "survival_label": SURVIVAL_LABEL_THRESHOLD,
+    }
+    return {
+        "schema": FITNESS_EVIDENCE_SCHEMA,
+        "symbolic_score": round(float(channels["symbolic_score"]), 6),
+        "neural_score": round(float(channels["neural_score"]), 6),
+        "ns_fitness": round(float(channels["ns_fitness"]), 6),
+        "signed_eta": round(float(channels["signed_eta"]), 6),
+        "absolute_channel_gap": round(float(channels["absolute_channel_gap"]), 6),
+        "symbolic_neural_ratio": (
+            round(float(channels["symbolic_neural_ratio"]), 6)
+            if channels.get("ratio_defined") else None
+        ),
+        "ratio_defined": bool(channels.get("ratio_defined")),
+        "belief_source": channels.get("belief_source", "derived"),
+        "resource_source": channels.get("resource_source", "derived"),
+        "mood_dot": round(float(fused), 6),
+        "threshold_distances": {
+            name: round(abs(float(fused) - threshold), 6)
+            for name, threshold in thresholds.items()
+        },
+        "threshold_margins": {
+            name: round(float(fused) - threshold, 6)
+            for name, threshold in thresholds.items()
+        },
+    }
 
 
 def mood_score(mood: str) -> float:
@@ -88,21 +162,25 @@ def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, 
 
 
 def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """Attach fused mood fields onto a trait-mapper result."""
+    """Attach the legacy fusion fields and an explicit companion evidence channel."""
     core = float(metrics.get("Core", metrics.get("core", 0.5)))
     entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
     coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
-    fit = ns_fusion(core=core, entropy=entropy, coupling=coupling)
+    belief = metrics.get("belief") if isinstance(metrics.get("belief"), Mapping) else None
+    resources = metrics.get("resources") if isinstance(metrics.get("resources"), Mapping) else None
+    channels = fitness_channels(
+        belief=belief, resources=resources, core=core, entropy=entropy, coupling=coupling
+    )
+    fit = channels["ns_fitness"]
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})
-    # FIX: pass the raw promoted flag. The prior conjunction with the promote
-    # threshold made the demote branch unreachable for any previously promoted
-    # colony whose fused score had fallen below DEMOTE_THRESHOLD.
+    # State-aware demotion: do not require a previously promoted colony to clear
+    # the promotion threshold before evaluating its demotion threshold.
     decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0)))
     label = state_mood
-    if fused >= 0.7 and state_mood == "neutral":
+    if fused >= CONVERGENT_LABEL_THRESHOLD and state_mood == "neutral":
         label = "convergent"
-    elif fused < 0.3 and state_mood != "survival":
+    elif fused < SURVIVAL_LABEL_THRESHOLD and state_mood != "survival":
         label = "survival"
     return {
         "ns_fitness": round(fit, 4),
@@ -112,6 +190,7 @@ def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[M
         "beta": BETA,
         "promote": decision,
         "genome_id": colony.get("genome_id") or genome_id(f"{label}:{fit:.4f}:{core:.3f}"),
+        "fitness_evidence": build_fitness_evidence(channels, fused),
         "colony": {
             "active": int(colony.get("active", 0)),
             "promoted": int(colony.get("promoted", 0)),
