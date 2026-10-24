@@ -337,6 +337,71 @@ def build_fusion_identity_state(
     }
 
 
+def build_fusion_receipt(
+    channels: Mapping[str, Any],
+    fused: float,
+    *,
+    stress_residual: float = 0.0,
+    stress_residual_normalized: float = 0.0,
+    neural_entropy_used: float = 0.0,
+    descent_source: str = "default_zero",
+    mood_input: str = "neutral",
+    mood_output: str = "neutral",
+    label_projection_threshold: Optional[str] = None,
+    metric_source: str = "unknown",
+    core: float = 0.5,
+    base_entropy: float = 0.0,
+    coupling: float = 0.0,
+    belief: Optional[Mapping[str, Any]] = None,
+    resources: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build evidence and its fingerprint witness from one identical input context.
+
+    Keeping these products in one constructor prevents scheduler or bridge call
+    sites from accidentally recording defaults while hashing a different state.
+    """
+    evidence = build_fitness_evidence(
+        channels,
+        fused,
+        stress_residual=stress_residual,
+        stress_residual_normalized=stress_residual_normalized,
+        neural_entropy_used=neural_entropy_used,
+        descent_source=descent_source,
+        mood_input=mood_input,
+        mood_output=mood_output,
+        label_projection_threshold=label_projection_threshold,
+        metric_source=metric_source,
+        core=core,
+        base_entropy=base_entropy,
+        coupling=coupling,
+        belief=belief,
+        resources=resources,
+    )
+    witness = build_fusion_identity_state(
+        mood_input=mood_input,
+        mood_output=mood_output,
+        channels=channels,
+        fused=fused,
+        core=core,
+        base_entropy=base_entropy,
+        neural_entropy_used=neural_entropy_used,
+        coupling=coupling,
+        belief=belief,
+        resources=resources,
+        stress_residual=stress_residual,
+        descent_source=descent_source,
+        metric_source=metric_source,
+    )
+    state_id = fitness_state_id(witness)
+    evidence["fusion_state_id"] = state_id
+    evidence["fusion_state_witness"] = witness
+    return {
+        "fusion_state_id": state_id,
+        "fitness_evidence": evidence,
+        "fusion_state_witness": witness,
+    }
+
+
 def colony_genome(members: list) -> str:
     blob = "|".join(sorted(str(m) for m in members)) or "empty-colony"
     return genome_id(f"colony:{blob}")
@@ -392,7 +457,7 @@ def apply_fusion(
         label = "survival"
         label_projection_threshold = "survival_label"
 
-    evidence = build_fitness_evidence(
+    receipt = build_fusion_receipt(
         channels,
         fused,
         stress_residual=residual,
@@ -409,26 +474,10 @@ def apply_fusion(
         belief=belief,
         resources=resources,
     )
-    identity_state = build_fusion_identity_state(
-        mood_input=state_mood,
-        mood_output=label,
-        channels=channels,
-        fused=fused,
-        core=core,
-        base_entropy=base_entropy,
-        neural_entropy_used=entropy,
-        coupling=coupling,
-        belief=belief,
-        resources=resources,
-        stress_residual=residual,
-        descent_source=descent_source,
-        metric_source=metric_source,
-    )
-    state_id = fitness_state_id(identity_state)
+    state_id = receipt["fusion_state_id"]
+    evidence = receipt["fitness_evidence"]
+    identity_state = receipt["fusion_state_witness"]
     derived_genome_id = fitness_state_genome_id(identity_state)
-    evidence["fusion_state_id"] = state_id
-    # Retain the exact canonical payload so consumers can independently recompute the digest.
-    evidence["fusion_state_witness"] = identity_state
     return {
         "ns_fitness": round(fit, 4),
         "mood_dot": round(fused, 4),
