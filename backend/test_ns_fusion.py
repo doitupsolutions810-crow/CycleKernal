@@ -93,6 +93,7 @@ class FusionStressTests(unittest.TestCase):
             "resources": {"attention": 50, "compute": 20, "memory_nodes": 1},
             "stress_residual": 0.0,
             "descent_source": "default_zero",
+            "metric_source": "unknown",
         }
         left_state = build_fusion_identity_state(**common, channels=left, fused=fused)
         right_state = build_fusion_identity_state(**common, channels=right, fused=fused)
