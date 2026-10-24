@@ -23,6 +23,9 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
         self.assertEqual(len(universe.fusion_log), 1)
         self.assertEqual(universe.fusion_log[0]["civ_id"], "test-civ")
+        self.assertEqual(universe.fusion_log[0]["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(evidence["metric_source"], "simulation_scheduler")
         self.assertEqual(universe.fusion_log[0]["fitness_evidence"], evidence)
 
     def test_fusion_lineage_is_bounded_and_in_snapshots(self):
@@ -47,6 +50,8 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         evidence = promoted_events[0]["fitness_evidence"]
         self.assertEqual(evidence, civ["fitness_evidence"])
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
+        self.assertEqual(evidence["metric_source"], "simulation_scheduler")
+        self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertIn("signed_eta", evidence)
         self.assertIn("threshold_margins", evidence)
 
