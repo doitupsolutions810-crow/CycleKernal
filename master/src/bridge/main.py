@@ -37,6 +37,16 @@ app.add_middleware(
 )
 
 EXPECTED_DESCENT_SCHEMA = "great-scale.descent/v0.4.2"
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
+    """Reject duplicate keys before JSON object construction erases their order."""
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
 current_state: CognitiveState = CognitiveState(metric_source="unavailable")
 ws_clients: list = []
 
@@ -47,7 +57,7 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
         payload = payload.decode("utf-8")
     if isinstance(payload, str):
         try:
-            payload = json.loads(payload)
+            payload = json.loads(payload, object_pairs_hook=_unique_json_object)
         except json.JSONDecodeError as exc:
             raise ValueError("relay message must be valid JSON") from exc
     if not isinstance(payload, Mapping):
@@ -64,15 +74,27 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
     }
     normalized: Dict[str, Any] = {}
     for canonical, names in aliases.items():
-        source_name = next((name for name in names if name in raw_metrics), None)
-        if source_name is None:
+        present_names = [name for name in names if name in raw_metrics]
+        if not present_names:
             raise ValueError(f"relay metric {canonical} is required")
-        # Validate the original JSON type before normalization to float. Otherwise
-        # true and "0.5" can be coerced into ordinary scores and evade fusion guards.
-        value = _json_number(raw_metrics[source_name], f"relay metric {canonical}")
-        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
-            raise ValueError(f"relay metric {canonical} must be finite and in [0, 1]")
-        normalized[canonical] = value
+
+        # Validate every spelling, not just the preferred spelling. Otherwise a
+        # valid canonical key can hide an invalid or contradictory legacy alias.
+        admitted = []
+        for source_name in present_names:
+            value = _json_number(
+                raw_metrics[source_name],
+                f"relay metric {canonical} alias {source_name}",
+            )
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"relay metric {canonical} must be finite and in [0, 1]")
+            admitted.append((source_name, value))
+
+        selected = admitted[0][1]
+        if any(value != selected for _, value in admitted[1:]):
+            spellings = ", ".join(source_name for source_name, _ in admitted)
+            raise ValueError(f"relay metric {canonical} aliases disagree: {spellings}")
+        normalized[canonical] = selected
 
     # Keep legacy names consumed by the trait mapper and NS fusion synchronized.
     normalized["entropy"] = normalized["L5"]
