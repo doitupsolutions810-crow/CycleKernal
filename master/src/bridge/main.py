@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+EXPECTED_DESCENT_SCHEMA = "great-scale.descent/v0.4.2"
 current_state: CognitiveState = CognitiveState(metric_source="unavailable")
 ws_clients: list = []
 
@@ -87,6 +88,8 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
             raise ValueError("relay stress_residual must be numeric") from exc
         if not math.isfinite(residual) or not 0.0 <= residual <= 7.0:
             raise ValueError("relay stress_residual must be finite and in [0, 7]")
+        if raw_metrics.get("descent_schema") != EXPECTED_DESCENT_SCHEMA:
+            raise ValueError(f"relay stress_residual requires descent_schema={EXPECTED_DESCENT_SCHEMA}")
         normalized["stress_residual"] = residual
     for field in ("belief", "resources"):
         if field in raw_metrics:
@@ -96,6 +99,8 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
     if "descent_schema" in raw_metrics:
         if not isinstance(raw_metrics["descent_schema"], str):
             raise ValueError("relay descent_schema must be a string")
+        if raw_metrics["descent_schema"] != EXPECTED_DESCENT_SCHEMA:
+            raise ValueError(f"unsupported relay descent_schema: {raw_metrics['descent_schema']}")
         normalized["descent_schema"] = raw_metrics["descent_schema"]
     return normalized
 
