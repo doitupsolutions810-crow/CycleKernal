@@ -24,6 +24,25 @@ class RelayProvenanceTests(unittest.TestCase):
         self.assertEqual(metrics["coupling"], metrics["L2"])
         self.assertEqual(metrics["entropy"], metrics["L5"])
 
+    def test_rejects_metric_fields_outside_wrapped_envelope(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        for shadow in (
+            {"Core": 0.9},
+            {"coupling": 0.08},
+            {"stress_residual": 3.5, "descent_schema": "great-scale.descent/v0.4.2"},
+            {"belief": {"truth": 0.8}},
+        ):
+            with self.subTest(shadow=shadow):
+                with self.assertRaisesRegex(ValueError, "keep metric fields inside"):
+                    normalize_relay_metrics({"metrics": base, **shadow})
+
+        # Ordinary envelope metadata remains permitted.
+        normalized = normalize_relay_metrics({
+            "metrics": base, "source": "LoopMem", "timestamp": 123
+        })
+        self.assertEqual(normalized["Core"], 0.4)
+        self.assertEqual(normalized["L5"], 0.7)
+
     def test_accepts_json_text(self):
         metrics = normalize_relay_metrics('{"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7}')
         self.assertEqual(metrics["Core"], 0.4)
@@ -114,6 +133,8 @@ class RelayProvenanceTests(unittest.TestCase):
                                 module.normalize_relay_metrics({**base, "Core": invalid})
                     with self.assertRaisesRegex(ValueError, "Core aliases disagree"):
                         module.normalize_relay_metrics({**base, "core": 0.5})
+                    with self.assertRaisesRegex(ValueError, "keep metric fields inside"):
+                        module.normalize_relay_metrics({"metrics": base, "Core": 0.9})
                     with self.assertRaisesRegex(ValueError, "duplicate JSON object key: Core"):
                         module.normalize_relay_metrics(
                             '{"Core":0.4,"Core":0.8,"U2":0.2,"L2":0.03,"L5":0.7}'
