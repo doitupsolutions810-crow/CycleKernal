@@ -413,3 +413,8 @@ The Descent CVI guard also runs at both relay ingress parsers, before type infor
 ## Descent CVIII — alias concordance
 
 Relay ingestion now rejects repeated JSON object keys and validates all simultaneously present canonical/legacy metric spellings. Matching aliases remain compatible; contradictory or invalid secondary aliases fail closed. See [Descent CVIII](docs/DESCENT_CVIII_ALIAS_CONCORDANCE.md). This is a data-integrity rule, not relay authentication.
+
+
+## Descent CVIX — relay envelope closure
+
+When a payload uses a metrics wrapper, recognized metric fields must live inside that wrapper. Contradictory or shadow metric fields at the outer level are rejected; ordinary metadata remains allowed. See [Descent CVIX](docs/DESCENT_CVIX_RELAY_ENVELOPE_CLOSURE.md).
