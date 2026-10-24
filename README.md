@@ -375,3 +375,8 @@ For issues, questions, or contributions:
 
 
 [Descent CI — Field-presence closure](docs/DESCENT_CI_WITNESS_COMPLETENESS.md) extends System 25 by preserving recognized field presence and validated-but-unscored input fields in the fusion witness. Equal score no longer implies equal supplied state.
+
+
+## Descent CII — explicit-null closure
+
+[Descent CII](docs/DESCENT_CII_EXPLICIT_NULL_CLOSURE.md) closes the final missingness ambiguity at the computation boundary: omitted mappings continue to use documented defaults, valid mappings (including empty mappings) remain explicit evidence, and supplied null/non-mapping values fail closed in the backend and both bridges.
