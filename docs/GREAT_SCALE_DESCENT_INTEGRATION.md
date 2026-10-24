@@ -50,3 +50,8 @@ The companion-channel and source-provenance changes are covered in the stacked P
 Each simulation cycle holds a per-universe reentrant lock across the Great Scale descent tick, fusion calculations, and lineage writes. Colony/descent snapshots take the same lock, include the cycle counter, and return detached copies of nested state. The main state endpoint builds each universe entry from one locked snapshot; scheduler metrics are computed from detached snapshots as well. Chat-memory mutations/readers use the same per-universe lock.
 
 This prevents a reader from observing a new descent tick paired with preceding-cycle fusion evidence, and prevents API callers from mutating live nested dictionaries by changing a returned response object. The guarantee is per universe: a transaction spanning multiple universes is not claimed. Relayed metric provenance remains a label rather than cryptographic source authentication.
+
+
+## Descent CVIII — raw-key and alias concordance
+
+The relay boundary now rejects duplicate keys in JSON text before dictionary construction and verifies every supplied spelling of Core/U2/L2/L5. Equal canonical/legacy aliases are accepted, but invalid or conflicting aliases are rejected instead of being silently ignored. See [Descent CVIII](DESCENT_CVIII_ALIAS_CONCORDANCE.md). This closes another pre-scoring information-loss boundary without changing score formulas or Great Scale geometry. Hosted workflow execution is still required to verify the full repository and image builds.
