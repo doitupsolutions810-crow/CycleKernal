@@ -1,6 +1,7 @@
 import unittest
 
 from simulation_core import Universe
+from ns_fusion import fitness_state_id
 
 
 class FitnessLineageTests(unittest.TestCase):
@@ -19,6 +20,7 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(universe.fusion_log[-1]["civ_id"], "test-civ")
         self.assertEqual(universe.fusion_log[-1]["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
+        self.assertEqual(fitness_state_id(evidence["fusion_state_witness"]), civ["fusion_state_id"])
         self.assertEqual(universe.fusion_log[-1]["fitness_evidence"], evidence)
 
     def test_lineage_history_is_bounded(self):
@@ -60,6 +62,7 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(evidence["descent_source"], "simulation_scheduler")
         self.assertIn("signed_eta", evidence)
         self.assertIn("threshold_margins", evidence)
+        self.assertEqual(fitness_state_id(evidence["fusion_state_witness"]), civ["fusion_state_id"])
 
 
 if __name__ == "__main__":
