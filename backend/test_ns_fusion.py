@@ -181,6 +181,12 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(evidence["fusion_state_id"], result["fusion_state_id"])
 
     def test_invalid_symbolic_inputs_fail_closed(self):
+        with self.assertRaisesRegex(ValueError, "belief must be a mapping"):
+            fitness_channels(belief=[], resources={"attention": 50}, core=0.5, entropy=0.2, coupling=0.1)
+        with self.assertRaisesRegex(ValueError, "resources must be a mapping"):
+            fitness_channels(belief={"truth": 0.5}, resources=[], core=0.5, entropy=0.2, coupling=0.1)
+        with self.assertRaisesRegex(ValueError, "belief must be a mapping"):
+            apply_fusion("neutral", {"Core": 0.5, "belief": []})
         with self.assertRaisesRegex(ValueError, "belief.truth must be finite and in"):
             fitness_channels(
                 belief={"truth": 1.01},
