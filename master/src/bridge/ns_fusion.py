@@ -37,7 +37,10 @@ def _json_number(value: Any, label: str) -> float:
     """Accept actual JSON number types, never booleans or coercible strings."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{label} must be a JSON number")
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{label} must be finite") from exc
 
 
 def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
