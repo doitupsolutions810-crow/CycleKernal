@@ -1,53 +1,93 @@
 """
-CognitiveBridge Service — CycleKernel Master v4.0
-Shared mood engine for all sub-agents and the orchestrator.
+CycleKernel CognitiveBridge: explicit live-versus-synthetic LoopMem provenance.
+A configured RELAY_URL means live-only ingestion: disconnects never silently
+fall back to generated values that look like live telemetry.
 """
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import math
+import os
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Any, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-import logging
-from typing import Dict
-from datetime import datetime
+from websockets import connect
 from traits import map_metrics_to_traits, CognitiveState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cognitive-bridge")
 
-app = FastAPI(title="CycleKernel CognitiveBridge", version="4.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(
+    title="CycleKernel Master CognitiveBridge",
+    description="LoopMem metrics mapped to traits with explicit input provenance and fusion evidence",
+    version="4.0.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-current_state = CognitiveState()
+current_state: CognitiveState = CognitiveState(metric_source="unavailable")
 ws_clients: list = []
 
 
-@app.on_event("startup")
-async def startup():
-    logger.info("CognitiveBridge v4.0 online")
-    asyncio.create_task(_synthetic_heartbeat())
+def normalize_relay_metrics(payload: Any) -> Dict[str, float]:
+    """Parse a WS relay frame and validate the minimum required metric vector."""
+    if isinstance(payload, bytes):
+        payload = payload.decode("utf-8")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("relay message must be valid JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("relay message must be a JSON object")
+    raw_metrics = payload.get("metrics", payload)
+    if not isinstance(raw_metrics, Mapping):
+        raise ValueError("relay 'metrics' field must be a JSON object")
+
+    aliases = {
+        "Core": ("Core", "core"),
+        "U2": ("U2", "u2"),
+        "L2": ("L2", "l2", "coupling"),
+        "L5": ("L5", "l5", "entropy"),
+    }
+    normalized: Dict[str, float] = {}
+    for canonical, names in aliases.items():
+        raw = next((raw_metrics[name] for name in names if name in raw_metrics), None)
+        if raw is None:
+            raise ValueError(f"relay metric {canonical} is required")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"relay metric {canonical} must be numeric") from exc
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"relay metric {canonical} must be finite and in [0, 1]")
+        normalized[canonical] = value
+
+    # Keep legacy names consumed by the trait mapper and NS fusion synchronized.
+    normalized["entropy"] = normalized["L5"]
+    normalized["coupling"] = normalized["L2"]
+    return normalized
 
 
-async def _synthetic_heartbeat():
-    """Drives a continuous LoopMem stream when no external WS Relay is present."""
-    import math
-    t = 0.0
-    while True:
-        t += 0.08
-        metrics = {
-            "Core": 0.25 + 0.55 * (0.5 + 0.5 * math.sin(t * 0.35)),
-            "U2": 0.3 + 0.4 * (0.5 + 0.5 * math.sin(t * 0.6 + 1)),
-            "L2": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
-            "L5": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
-            "entropy": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
-            "coupling": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
-        }
-        await sync_state(metrics)
-        await asyncio.sleep(1.5)
-
-
-async def sync_state(metrics: Dict):
+async def sync_state(metrics: Dict, metric_source: str = "unknown"):
+    """Map current telemetry while preserving the source in the public state."""
     global current_state
-    current_state = map_metrics_to_traits(metrics)
+    current_state = map_metrics_to_traits(metrics, metric_source=metric_source)
+    logger.info(
+        "Bridge state updated: mood=%s source=%s",
+        current_state.mood,
+        current_state.metric_source,
+    )
     for ws in ws_clients[:]:
         try:
             await ws.send_json(current_state.to_dict())
@@ -56,21 +96,99 @@ async def sync_state(metrics: Dict):
                 ws_clients.remove(ws)
 
 
+async def _synthetic_metrics_stream():
+    t = 0.0
+    while True:
+        t += 0.08
+        yield {
+            "Core": 0.25 + 0.55 * (0.5 + 0.5 * math.sin(t * 0.35)),
+            "U2": 0.3 + 0.4 * (0.5 + 0.5 * math.sin(t * 0.6 + 1)),
+            "L2": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
+            "L5": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
+            "entropy": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
+            "coupling": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
+        }
+        await asyncio.sleep(1.5)
+
+
+
+async def _synthetic_heartbeat():
+    """Development-only synthetic stream; every emitted state says synthetic."""
+    async for metrics in _synthetic_metrics_stream():
+        await sync_state(metrics, metric_source="synthetic")
+
+
+@app.on_event("startup")
+async def startup():
+    logger.info("CognitiveBridge %s online; configuring metric source", "4.0.0")
+    asyncio.create_task(subscribe_to_relay())
+
+
+async def subscribe_to_relay():
+    relay_url = os.environ.get("RELAY_URL", "").strip()
+    allow_synthetic = os.environ.get("ALLOW_SYNTHETIC_RELAY", "1").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if not relay_url:
+        if not allow_synthetic:
+            current_state.metric_source = "unavailable"
+            logger.error("RELAY_URL is unset and synthetic metrics are disabled")
+            while True:
+                await asyncio.sleep(5)
+        logger.warning("RELAY_URL is unset; starting an explicitly labelled synthetic stream")
+        await _synthetic_heartbeat()
+        return
+
+    # A configured relay is the source of truth. Never substitute synthetic
+    # metrics on connect, schema, or stream failures.
+    while True:
+        try:
+            logger.info("Connecting to configured WS Relay: %s", relay_url)
+            async with connect(
+                relay_url,
+                open_timeout=5,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=3,
+                max_size=1_048_576,
+            ) as websocket:
+                logger.info("Connected to WS Relay")
+                async for raw_message in websocket:
+                    metrics = normalize_relay_metrics(raw_message)
+                    await sync_state(metrics, metric_source="relay")
+                raise ConnectionError("WS Relay stream ended")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if current_state.metric_source == "relay":
+                current_state.metric_source = "relay_stale"
+            logger.warning("WS Relay failed; retrying without synthetic substitution: %s", exc)
+            await asyncio.sleep(3)
+
+
 @app.get("/v1/current_mood")
 async def get_current_mood():
+    """Read-only view with metric source, channel scores, and Great Scale diagnostics."""
     return current_state.to_dict()
 
 
 @app.post("/v1/feedback")
 async def ingest_feedback(payload: Dict):
-    """Closed-loop entry point: conversation outcomes feed back into LoopMem."""
-    logger.info(f"Feedback received: {payload}")
+    logger.info("Feedback received")
     return {"status": "ingested", "timestamp": datetime.utcnow().isoformat()}
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ghost-online", "version": "4.0.0", "mood": current_state.mood}
+    source = current_state.metric_source
+    healthy = source in ("relay", "synthetic")
+    return {
+        "status": "ghost-online" if healthy else "degraded",
+        "version": "4.0.0",
+        "metric_source": source,
+        "state_timestamp": current_state.timestamp,
+        "mood": current_state.mood,
+    }
 
 
 @app.websocket("/ws/hud")
@@ -84,3 +202,8 @@ async def hud_stream(websocket: WebSocket):
     except WebSocketDisconnect:
         if websocket in ws_clients:
             ws_clients.remove(websocket)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8090)
