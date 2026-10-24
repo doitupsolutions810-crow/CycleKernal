@@ -32,6 +32,7 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(evidence["mood_input"], "neutral")
         self.assertEqual(evidence["mood_output"], "neutral")
         self.assertFalse(evidence["mood_label_projected"])
+        self.assertEqual(evidence["genome_state_schema"], result["genome_state_schema"])
         self.assertEqual(
             set(evidence["threshold_margins"]),
             {"promote", "demote", "convergent_label", "survival_label"},
