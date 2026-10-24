@@ -380,3 +380,8 @@ For issues, questions, or contributions:
 ## Descent CII — explicit-null closure
 
 [Descent CII](docs/DESCENT_CII_EXPLICIT_NULL_CLOSURE.md) closes the final missingness ambiguity at the computation boundary: omitted mappings continue to use documented defaults, valid mappings (including empty mappings) remain explicit evidence, and supplied null/non-mapping values fail closed in the backend and both bridges.
+
+
+## Descent CIII — evidence/identity concordance
+
+[Descent CIII](docs/DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md) centralizes receipt construction so the scheduler's evidence values, input-presence metadata, canonical witness, and state fingerprint are generated from the same context. This prevents a readable receipt from reporting fallback defaults while the scored state uses live inputs.
