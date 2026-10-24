@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from websockets import connect
 from traits import map_metrics_to_traits, CognitiveState
-from ns_fusion import validate_symbolic_inputs
+from ns_fusion import _json_number, validate_symbolic_inputs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cognitive-bridge")
@@ -64,13 +64,12 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
     }
     normalized: Dict[str, Any] = {}
     for canonical, names in aliases.items():
-        raw = next((raw_metrics[name] for name in names if name in raw_metrics), None)
-        if raw is None:
+        source_name = next((name for name in names if name in raw_metrics), None)
+        if source_name is None:
             raise ValueError(f"relay metric {canonical} is required")
-        try:
-            value = float(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"relay metric {canonical} must be numeric") from exc
+        # Validate the original JSON type before normalization to float. Otherwise
+        # true and "0.5" can be coerced into ordinary scores and evade fusion guards.
+        value = _json_number(raw_metrics[source_name], f"relay metric {canonical}")
         if not math.isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError(f"relay metric {canonical} must be finite and in [0, 1]")
         normalized[canonical] = value
@@ -83,10 +82,7 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
     # are never synthesized from Core/L2/L5; the Great Scale adapter validates
     # the configured [0, 7] scheduler residual domain separately.
     if "stress_residual" in raw_metrics:
-        try:
-            residual = float(raw_metrics["stress_residual"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("relay stress_residual must be numeric") from exc
+        residual = _json_number(raw_metrics["stress_residual"], "relay stress_residual")
         if not math.isfinite(residual) or not 0.0 <= residual <= 7.0:
             raise ValueError("relay stress_residual must be finite and in [0, 7]")
         schema = raw_metrics.get("descent_schema")
