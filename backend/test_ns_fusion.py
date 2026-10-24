@@ -2,6 +2,8 @@ import unittest
 
 from ns_fusion import (
     apply_fusion,
+    build_fusion_identity_state,
+    fitness_state_id,
     fitness_channels,
     fuse_mood,
     neural_score,
@@ -25,6 +27,11 @@ class FusionStressTests(unittest.TestCase):
         self.assertIn("signed_eta", evidence)
         self.assertIn("symbolic_neural_ratio", evidence)
         self.assertEqual(evidence["descent_source"], "default_zero")
+        self.assertEqual(result["fusion_state_id"], evidence["fusion_state_id"])
+        self.assertEqual(result["genome_id"], result["fusion_state_id"])
+        self.assertEqual(evidence["mood_input"], "neutral")
+        self.assertEqual(evidence["mood_output"], "neutral")
+        self.assertFalse(evidence["mood_label_projected"])
         self.assertEqual(
             set(evidence["threshold_margins"]),
             {"promote", "demote", "convergent_label", "survival_label"},
@@ -64,6 +71,57 @@ class FusionStressTests(unittest.TestCase):
             fuse_mood(unbalanced["ns_fitness"], "neutral"),
             fuse_mood(balanced["ns_fitness"], "neutral"),
         )
+
+    def test_identical_scalar_can_have_distinct_state_fingerprints(self):
+        # sqrt(.9*.4) == sqrt(.6*.6) = .6; mood fusion also sees .565
+        # for both under the same neutral mood. The companion state ID must
+        # still distinguish the two underlying channel pairs.
+        left = summarize_fitness_channels(0.9, 0.4)
+        right = summarize_fitness_channels(0.6, 0.6)
+        fused = fuse_mood(0.6, "neutral")
+        common = {
+            "mood_input": "neutral",
+            "mood_output": "neutral",
+            "core": 0.5,
+            "base_entropy": 0.5,
+            "neural_entropy_used": 0.5,
+            "coupling": 0.0,
+            "belief": {"truth": 0.5},
+            "resources": {"attention": 50, "compute": 20, "memory_nodes": 1},
+            "stress_residual": 0.0,
+            "descent_source": "default_zero",
+        }
+        left_state = build_fusion_identity_state(**common, channels=left, fused=fused)
+        right_state = build_fusion_identity_state(**common, channels=right, fused=fused)
+        self.assertAlmostEqual(left["ns_fitness"], right["ns_fitness"])
+        self.assertAlmostEqual(fuse_mood(left["ns_fitness"], "neutral"), fused)
+        self.assertAlmostEqual(fuse_mood(right["ns_fitness"], "neutral"), fused)
+        self.assertNotEqual(fitness_state_id(left_state), fitness_state_id(right_state))
+        self.assertEqual(fitness_state_id(left_state), fitness_state_id(left_state))
+
+    def test_mood_threshold_projection_is_an_explicit_companion_event(self):
+        high = apply_fusion(
+            "neutral",
+            {
+                "Core": 1.0, "L5": 0.0, "L2": 0.2,
+                "belief": {"truth": 1.0},
+                "resources": {"attention": 150, "compute": 40, "memory_nodes": 8},
+            },
+        )
+        self.assertEqual(high["mood"], "convergent")
+        self.assertTrue(high["fitness_evidence"]["mood_label_projected"])
+        self.assertEqual(high["fitness_evidence"]["label_projection_threshold"], "convergent_label")
+        low = apply_fusion(
+            "neutral",
+            {
+                "Core": 0.0, "L5": 1.0, "L2": 0.0,
+                "belief": {"truth": 0.0},
+                "resources": {"attention": 0, "compute": 0, "memory_nodes": 0},
+            },
+        )
+        self.assertEqual(low["mood"], "survival")
+        self.assertTrue(low["fitness_evidence"]["mood_label_projected"])
+        self.assertEqual(low["fitness_evidence"]["label_projection_threshold"], "survival_label")
 
     def test_zero_neural_channel_has_explicit_undefined_ratio(self):
         state = summarize_fitness_channels(0.7, 0.0)
