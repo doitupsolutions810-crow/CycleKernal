@@ -88,8 +88,11 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
             raise ValueError("relay stress_residual must be numeric") from exc
         if not math.isfinite(residual) or not 0.0 <= residual <= 7.0:
             raise ValueError("relay stress_residual must be finite and in [0, 7]")
-        if raw_metrics.get("descent_schema") != EXPECTED_DESCENT_SCHEMA:
+        schema = raw_metrics.get("descent_schema")
+        if schema is None:
             raise ValueError(f"relay stress_residual requires descent_schema={EXPECTED_DESCENT_SCHEMA}")
+        if schema != EXPECTED_DESCENT_SCHEMA:
+            raise ValueError(f"unsupported relay descent_schema: {schema}")
         normalized["stress_residual"] = residual
     for field in ("belief", "resources"):
         if field in raw_metrics:
