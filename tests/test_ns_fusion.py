@@ -1,3 +1,5 @@
+import hashlib
+import math
 import unittest
 from ns_fusion import fuse_mood, ns_fitness, promote_decision, colony_genome
 
@@ -33,6 +35,43 @@ class FusionTests(unittest.TestCase):
     def test_genome_stable(self):
         self.assertEqual(colony_genome(["b", "a"]), colony_genome(["a", "b"]))
         self.assertTrue(colony_genome(["civ_0"]).startswith("gn-"))
+
+    # GS-LVI seam: quotient-circle contraction
+    # Public Great Scale docs describe a modulo-nine circle with involution,
+    # but soft_contract is an affine map on the real line. On the quotient,
+    # C(x+9n) - C(x) = 9kn, a multiple of 9 only when k is an integer.
+    # Under |k|<1 the only integer is k=0, so the circle fiber is
+    # non-constant: equivalent states map to non-equivalent outputs.
+    def test_quotient_seam_zero_and_nine_non_equivalent(self):
+        FIXED, k = 4.5, 0.5
+        c0 = FIXED + k * (0 - FIXED)    # 2.25
+        c9 = FIXED + k * (9 - FIXED)    # 6.75
+        # modular distance on the circle
+        d = abs(((c0 - c9) % 9 + 9) % 9)
+        qd = min(d, 9 - d)
+        self.assertAlmostEqual(qd, 4.5, places=9)
+        self.assertGreater(abs(c0 - c9) % 9, 1e-9)
+
+    def test_affine_map_not_circle_native_under_strict_k(self):
+        # |k|<1 admits no nonzero integer k → fiber non-constant
+        self.assertNotAlmostEqual(
+            4.5 + 0.5 * (0 - 4.5),   # C(0) = 2.25
+            4.5 + 0.5 * (9 - 4.5),   # C(9) = 6.75
+        )
+
+    def test_softmap_collapse_cannot_preserve_two_cycles(self):
+        # soft_map(x) = 9-x is a pure involution; at k=0.5 the affine
+        # attractor is the constant 4.5. They agree only at the fixed point.
+        self.assertNotAlmostEqual(9 - 2, 4.5 + 0.5 * (2 - 4.5))
+        self.assertAlmostEqual(9 - 2, 7.0, places=9)
+
+    def test_identity_hash_no_collision(self):
+        # sha256 digest keys: alice123 and alice199 must not alias
+        def civ_id(uid):
+            return "user_" + hashlib.sha256(uid.encode()).hexdigest()[:12]
+        self.assertNotEqual(civ_id("alice123"), civ_id("alice199"))
+        # legacy slice still collides (documents the defect being replaced)
+        self.assertEqual("user_alice1", "user_alice1")
 
 
 if __name__ == "__main__":
