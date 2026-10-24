@@ -54,3 +54,8 @@ The LVII analytic envelope remains a separate proof object. Type-valid input dat
 ## Verification boundary
 
 Source inspection confirms the helper and checks exist in all three fusion copies and that the tests cover invalid numeric types. Hosted Actions remains unable to allocate a runner (the returned jobs have empty step lists). These changes are source-integrated, but the full CycleKernal suite, compile step, and Docker builds are not reported as passed until actual execution evidence is available.
+
+
+## Relay-ingress closure
+
+The first strict-type guard still had a normalization bypass: `normalize_relay_metrics()` converted `Core`, `U2`, `L2`, `L5`, and the optional `stress_residual` to floats before fusion received them. A boolean or numeric string could therefore lose its original type at the bridge boundary. Both primary and master relay parsers now call the shared `_json_number` guard on the raw field before conversion and distinguish an omitted required metric from an explicitly supplied null. Regressions cover both parser copies, booleans, numeric strings, and oversized integers.
