@@ -121,10 +121,11 @@ def fitness_channels(
         raise ValueError("belief must be a mapping")
     if resources is not None and not isinstance(resources, Mapping):
         raise ValueError("resources must be a mapping")
-    belief_provided = bool(belief)
-    resources_provided = bool(resources)
-    belief = belief or {"truth": 0.5, "deception": 0.5}
-    resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
+    # None means absent; an explicitly supplied empty mapping remains provided evidence.
+    belief_provided = belief is not None
+    resources_provided = resources is not None
+    belief = {"truth": 0.5, "deception": 0.5} if belief is None else belief
+    resources = {"attention": 50, "compute": 20, "memory_nodes": 1} if resources is None else resources
     return {
         **summarize_fitness_channels(
             symbolic_score(belief, resources),
@@ -255,8 +256,8 @@ def build_fusion_identity_state(
 ) -> Dict[str, Any]:
     """Canonical state material, keeping latent channels distinct from the scalar."""
     validate_symbolic_inputs(belief, resources)
-    effective_belief = belief or {"truth": 0.5, "deception": 0.5}
-    effective_resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
+    effective_belief = {"truth": 0.5, "deception": 0.5} if belief is None else belief
+    effective_resources = {"attention": 50, "compute": 20, "memory_nodes": 1} if resources is None else resources
     return {
         "schema": FUSION_STATE_ID_SCHEMA,
         "mood_input": mood_input,
