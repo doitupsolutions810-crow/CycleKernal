@@ -95,6 +95,53 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(snapshots), 1)
         self.assertEqual(snapshots[0]["cycle_count"], snapshots[0]["t"])
 
+    def test_colony_snapshot_waits_for_fusion_and_lineage_completion(self):
+        universe = Universe("atomic-colony")
+        civ = universe.add_civilization("test-civ")
+        cycle_complete = Event()
+        release_cycle = Event()
+        snapshot_started = Event()
+        snapshot_done = Event()
+        snapshots = []
+        original_cycle = universe._simulate_cycle_locked
+
+        def delayed_cycle():
+            original_cycle()
+            cycle_complete.set()
+            if not release_cycle.wait(2):
+                raise TimeoutError("test did not release complete cycle")
+
+        def read_snapshot():
+            snapshot_started.set()
+            snapshots.append(universe.colony_snapshot())
+            snapshot_done.set()
+
+        universe._simulate_cycle_locked = delayed_cycle
+        runner = Thread(target=universe.simulate_cycle)
+        reader = Thread(target=read_snapshot)
+        runner.start()
+        try:
+            self.assertTrue(cycle_complete.wait(2))
+            reader.start()
+            self.assertTrue(snapshot_started.wait(2))
+            self.assertFalse(snapshot_done.wait(0.05))
+        finally:
+            release_cycle.set()
+            runner.join(2)
+            if reader.ident is not None:
+                reader.join(2)
+
+        self.assertFalse(runner.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(len(snapshots), 1)
+        snap = snapshots[0]
+        self.assertEqual(snap["cycle_count"], universe.cycle_count)
+        self.assertEqual(snap["fusion_history"][-1]["cycle"], snap["cycle_count"])
+        member = next(row for row in snap["members"] if row["id"] == "test-civ")
+        self.assertEqual(member["fusion_state_id"], member["fitness_evidence"]["fusion_state_id"])
+        self.assertEqual(snap["fusion_history"][-1]["fusion_state_id"], member["fusion_state_id"])
+        self.assertEqual(civ["fusion_state_id"], member["fusion_state_id"])
+
     def test_cycle_kernel_state_contains_descent_snapshot(self):
         kernel.run_simulation(1)
         state = kernel.get_state()
