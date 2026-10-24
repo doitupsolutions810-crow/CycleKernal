@@ -61,3 +61,8 @@ The Descent LVII risk certificate also remains separate from CI state: (U_*(\var
 ## Current verification boundary
 
 The latest source audit confirms the shared fusion receipt, state witness, and separate promotion-decision fingerprint are integrated on the open CycleKernal PR; the Great Scale note cross-links the result. Hosted Actions still has not executed the repository steps. The new application code and newly added regressions are therefore source-integrated but not yet full-suite/build verified.
+
+
+## Follow-on: typed numerical admission (Descent CVI)
+
+Execution evidence is only useful if malformed values cannot enter scoring through implicit coercion. Descent CVI closes the `bool`/string-to-number conversion path across nested symbolic fields and top-level fusion metrics and adds cross-copy regression assertions. Full repository execution remains pending an assigned runner. See [Descent CVI](DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md).
