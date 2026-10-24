@@ -367,3 +367,8 @@ For issues, questions, or contributions:
 ---
 
 **Built with ❤️ for simulation and monitoring excellence**
+
+
+## Neuro-symbolic fusion evidence
+
+The NS fusion output now includes a provenance-preserving companion channel with the raw symbolic and neural components, telemetry source, and signed distances to the four decision/label thresholds. See [Descent XCVIII — Provenance-preserving neuro-symbolic fusion](docs/DESCENT_XCVIII_PROVENANCE_PRESERVING_FUSION.md). The bridge heartbeat is marked synthetic until a real WS Relay feed is connected and verified.
