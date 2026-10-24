@@ -171,6 +171,47 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(promote_decision(0.28, already_promoted=True)["action"], "hold")
         self.assertEqual(promote_decision(0.2799, already_promoted=True)["action"], "demote")
 
+
+    def test_fusion_state_witness_recomputes_fingerprint(self):
+        result = apply_fusion("neutral", {"Core": 0.6, "L5": 0.2, "L2": 0.04})
+        evidence = result["fitness_evidence"]
+        witness = evidence["fusion_state_witness"]
+        self.assertIsInstance(witness, dict)
+        self.assertEqual(fitness_state_id(witness), result["fusion_state_id"])
+        self.assertEqual(evidence["fusion_state_id"], result["fusion_state_id"])
+
+    def test_invalid_symbolic_inputs_fail_closed(self):
+        with self.assertRaisesRegex(ValueError, "belief.truth must be finite and in"):
+            fitness_channels(
+                belief={"truth": 1.01},
+                resources={"attention": 50, "compute": 20, "memory_nodes": 1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
+        with self.assertRaisesRegex(ValueError, "belief.deception must be finite and in"):
+            fitness_channels(
+                belief={"truth": 0.5, "deception": float("nan")},
+                resources={"attention": 50, "compute": 20, "memory_nodes": 1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
+        with self.assertRaisesRegex(ValueError, "resources.attention must be finite and nonnegative"):
+            fitness_channels(
+                belief={"truth": 0.5},
+                resources={"attention": -1, "compute": 20, "memory_nodes": 1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
+        with self.assertRaisesRegex(ValueError, "resources.compute must be finite and nonnegative"):
+            fitness_channels(
+                belief={"truth": 0.5},
+                resources={"attention": 50, "compute": float("inf"), "memory_nodes": 1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
+        with self.assertRaisesRegex(ValueError, "resources.memory_nodes must be finite and nonnegative"):
+            fitness_channels(
+                belief={"truth": 0.5},
+                resources={"attention": 50, "compute": 20, "memory_nodes": -0.1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
+
     def test_nonfinite_score_input_fails_closed(self):
         with self.assertRaises(ValueError):
             neural_score(float("nan"), 0.2, 0.1)
