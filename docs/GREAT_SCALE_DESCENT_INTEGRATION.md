@@ -47,6 +47,6 @@ The companion-channel and source-provenance changes are covered in the stacked P
 
 ## Cycle-atomic evidence snapshots
 
-Each simulation cycle holds the universe snapshot lock across the Great Scale descent tick, fusion calculations, and lineage writes. Colony and descent snapshot readers take the same lock; colony snapshots include the cycle counter. This prevents a reader from seeing a new descent tick paired with the previous cycle's fusion evidence.
+Each simulation cycle holds a per-universe reentrant lock across the Great Scale descent tick, fusion calculations, and lineage writes. Colony/descent snapshots take the same lock, include the cycle counter, and return detached copies of nested state. The main state endpoint builds each universe entry from one locked snapshot; scheduler metrics are computed from detached snapshots as well. Chat-memory mutations/readers use the same per-universe lock.
 
-The guarantee is per universe. A single transaction spanning multiple universes is not claimed, and relayed metric provenance remains a label rather than cryptographic source authentication.
+This prevents a reader from observing a new descent tick paired with preceding-cycle fusion evidence, and prevents API callers from mutating live nested dictionaries by changing a returned response object. The guarantee is per universe: a transaction spanning multiple universes is not claimed. Relayed metric provenance remains a label rather than cryptographic source authentication.
