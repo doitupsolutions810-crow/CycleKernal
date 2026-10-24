@@ -278,6 +278,14 @@ class FusionStressTests(unittest.TestCase):
             neural_score(True, 0.2, 0.1)
         with self.assertRaisesRegex(ValueError, "coupling must be a JSON number"):
             neural_score(0.5, 0.2, "0.1")
+        # Very large JSON integers are numeric by type but cannot be represented
+        # as finite scoring doubles; reject them as validation errors, not overflow.
+        with self.assertRaisesRegex(ValueError, "belief.truth must be finite"):
+            fitness_channels(
+                belief={"truth": 10 ** 10000},
+                resources={"attention": 50, "compute": 20, "memory_nodes": 1},
+                core=0.5, entropy=0.2, coupling=0.1,
+            )
 
 
     def test_explicit_empty_symbolic_inputs_do_not_collapse_to_absent_defaults(self):
