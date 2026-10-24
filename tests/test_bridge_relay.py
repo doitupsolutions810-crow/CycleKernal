@@ -72,6 +72,7 @@ class RelayProvenanceTests(unittest.TestCase):
         metrics = normalize_relay_metrics({
             "Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65,
             "stress_residual": 3.5,
+            "descent_schema": "great-scale.descent/v0.4.2",
         })
         payload = map_metrics_to_traits(metrics, metric_source="relay").to_dict()
         self.assertEqual(payload["fitness_evidence"]["descent_source"], "provided")
