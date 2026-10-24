@@ -30,6 +30,11 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(promote_decision(0.40)["action"], "hold")
         self.assertEqual(promote_decision(0.20, already_promoted=True)["action"], "demote")
 
+    def test_promoted_hold_reports_demotion_boundary(self):
+        decision = promote_decision(0.40, already_promoted=True)
+        self.assertEqual(decision["action"], "hold")
+        self.assertEqual(decision["threshold"], 0.28)
+
     def test_equal_geometric_mean_preserves_distinct_channel_pairs(self):
         left = fusion_evidence(0.9, 0.4)
         right = fusion_evidence(0.6, 0.6)
