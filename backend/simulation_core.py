@@ -132,6 +132,10 @@ class Universe:
             decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
             evidence = {
                 **components,
+                "channel_provenance": {
+                    "symbolic": {"source": "belief+resources", "complete": True},
+                    "neural": {"source": "Core+entropy+coupling", "complete": True},
+                },
                 "mood_dot": fused,
                 "mood_threshold_distances": {
                     "to_promote": fused - 0.62,
@@ -162,6 +166,7 @@ class Universe:
                 "channel_gap": components["channel_gap"],
                 "threshold_distances": components["threshold_distances"],
                 "mood_threshold_distances": evidence["mood_threshold_distances"],
+                "channel_provenance": evidence["channel_provenance"],
             }
             self.fusion_log.append(fusion_event)
             if len(self.fusion_log) > 1000:
