@@ -400,3 +400,6 @@ For issues, questions, or contributions:
 ## Descent CVI — typed numerical admission
 
 [Descent CVI](docs/DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md) closes a Python type-coercion hole: booleans and numeric strings previously passed `float(...)` and could become score-bearing inputs. The common `_json_number` guard rejects those values across belief/resources and neural/top-level fusion metrics before range checks, with regression coverage across all three fusion copies. Valid numeric inputs and scoring thresholds are unchanged.
+
+
+The Descent CVI guard also runs at both relay ingress parsers, before type information is lost through normalization. Raw booleans, numeric strings, explicit nulls, and overflowing integer inputs cannot become ordinary floating-point metrics. Cross-copy relay parser tests are included; hosted execution remains blocked until a runner is assigned.
