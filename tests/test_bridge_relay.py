@@ -80,6 +80,24 @@ class RelayProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported relay descent_schema"):
             normalize_relay_metrics({**base, "descent_schema": "some-other-version"})
 
+
+    def test_relay_preserves_explicit_empty_symbolic_objects(self):
+        payload = normalize_relay_metrics({
+            "Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7,
+            "belief": {}, "resources": {},
+        })
+        self.assertEqual(payload["belief"], {})
+        self.assertEqual(payload["resources"], {})
+        state = map_metrics_to_traits(payload, metric_source="relay").to_dict()
+        evidence = state["fitness_evidence"]
+        self.assertEqual(evidence["belief_source"], "provided")
+        self.assertEqual(evidence["resource_source"], "provided")
+        self.assertEqual(evidence["inputs"]["symbolic"]["attention"], 0.0)
+        self.assertEqual(
+            fitness_state_id(evidence["fusion_state_witness"]),
+            state["fusion_state_id"],
+        )
+
     def test_mapped_state_retains_source_and_companion_channel(self):
         metrics = normalize_relay_metrics({"Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65})
         state = map_metrics_to_traits(metrics, metric_source="relay")
