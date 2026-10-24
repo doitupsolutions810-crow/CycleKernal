@@ -85,3 +85,8 @@ The added tests assert:
 5. every canonical witness recomputes to the reported SHA-256 fingerprint.
 
 A mathematical/isolated harness is not a substitute for the committed tests. Recent hosted Actions jobs in both repositories failed before runner allocation with no executed steps and unavailable logs. Therefore the full CI/build/bridge-image status remains blocked and unverified.
+
+
+## Follow-on: evidence/identity concordance (Descent CIII)
+
+Recognized field presence is only useful if the scheduler's human-readable evidence actually receives the mappings used to compute the score. Descent CIII centralizes evidence and witness construction in `build_fusion_receipt`, used by both scheduler and `apply_fusion`, and attaches the recomputable witness in both paths. See [Descent CIII](DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md).
