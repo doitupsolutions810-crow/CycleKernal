@@ -8,6 +8,7 @@ Great Scale residual used in the neural entropy path.
 from __future__ import annotations
 
 import hashlib
+import json
 from math import isfinite, sqrt
 from typing import Any, Dict, Mapping, Optional
 
@@ -127,6 +128,9 @@ def build_fitness_evidence(
     stress_residual_normalized: float = 0.0,
     neural_entropy_used: float = 0.0,
     descent_source: str = "default_zero",
+    mood_input: str = "neutral",
+    mood_output: str = "neutral",
+    label_projection_threshold: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a JSON-safe companion record; it does not alter decision policy."""
     thresholds = {
@@ -150,6 +154,11 @@ def build_fitness_evidence(
         "belief_source": channels.get("belief_source", "derived"),
         "resource_source": channels.get("resource_source", "derived"),
         "mood_dot": round(float(fused), 6),
+        "mood_input": mood_input,
+        "mood_output": mood_output,
+        "mood_label_projected": mood_input != mood_output,
+        "label_projection_threshold": label_projection_threshold,
+        "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "threshold_distances": {
             name: round(abs(float(fused) - threshold), 6)
             for name, threshold in thresholds.items()
@@ -166,9 +175,17 @@ def build_fitness_evidence(
     }
 
 
+FUSION_STATE_ID_SCHEMA = "cyclekernel.fusion-state/v2"
+
 def genome_id(seed: str) -> str:
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return f"gn-{digest[:12]}"
+
+
+def fitness_state_id(state: Mapping[str, Any]) -> str:
+    """Hash the canonical channel/state record, not only its lossy fused scalar."""
+    canonical = json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return genome_id(canonical)
 
 
 def colony_genome(members: list) -> str:
@@ -216,6 +233,14 @@ def apply_fusion(
         label = "convergent"
     elif fused < SURVIVAL_LABEL_THRESHOLD and state_mood != "survival":
         label = "survival"
+    label_projection_threshold = None
+    if fused >= CONVERGENT_LABEL_THRESHOLD and state_mood == "neutral":
+        label = "convergent"
+        label_projection_threshold = "convergent_label"
+    elif fused < SURVIVAL_LABEL_THRESHOLD and state_mood != "survival":
+        label = "survival"
+        label_projection_threshold = "survival_label"
+
     evidence = build_fitness_evidence(
         channels,
         fused,
@@ -223,7 +248,36 @@ def apply_fusion(
         stress_residual_normalized=residual_normalized,
         neural_entropy_used=entropy,
         descent_source=descent_source,
+        mood_input=state_mood,
+        mood_output=label,
+        label_projection_threshold=label_projection_threshold,
     )
+    effective_belief = belief or {"truth": 0.5, "deception": 0.5}
+    effective_resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
+    identity_state = {
+        "schema": FUSION_STATE_ID_SCHEMA,
+        "mood_input": state_mood,
+        "mood_output": label,
+        "symbolic_score": channels["symbolic_score"],
+        "neural_score": channels["neural_score"],
+        "ns_fitness": fit,
+        "mood_dot": fused,
+        "signed_eta": channels["signed_eta"],
+        "symbolic_neural_ratio": channels["symbolic_neural_ratio"],
+        "ratio_defined": channels["ratio_defined"],
+        "belief_truth": float(effective_belief.get("truth", 0.5)),
+        "resource_attention": float(effective_resources.get("attention", 0.0)),
+        "resource_compute": float(effective_resources.get("compute", 0.0)),
+        "resource_memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
+        "core": core,
+        "base_entropy": base_entropy,
+        "neural_entropy_used": entropy,
+        "coupling": coupling,
+        "stress_residual": residual,
+        "descent_source": descent_source,
+        "descent_schema": DESCENT_SCHEMA,
+    }
+    state_id = fitness_state_id(identity_state)
     return {
         "ns_fitness": round(fit, 4),
         "mood_dot": round(fused, 4),
@@ -231,7 +285,8 @@ def apply_fusion(
         "alpha": ALPHA,
         "beta": BETA,
         "promote": decision,
-        "genome_id": colony.get("genome_id") or genome_id(f"{label}:{fit:.4f}:{core:.3f}"),
+        "genome_id": colony.get("genome_id") or state_id,
+        "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "fitness_evidence": evidence,
         "stress_residual": residual,
         "stress_residual_normalized": residual_normalized,
