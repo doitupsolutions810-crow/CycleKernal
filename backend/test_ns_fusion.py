@@ -1,17 +1,33 @@
 import unittest
 
-from ns_fusion import apply_fusion, ns_fitness
+from ns_fusion import (
+    apply_fusion,
+    fitness_channels,
+    fuse_mood,
+    neural_score,
+    ns_fitness,
+    promote_decision,
+    summarize_fitness_channels,
+    symbolic_score,
+)
 
 
 class FusionStressTests(unittest.TestCase):
-    def test_every_apply_fusion_result_has_stress_receipt_fields(self):
+    def test_every_apply_fusion_result_has_stress_and_companion_receipts(self):
         result = apply_fusion("neutral", {"Core": 0.6, "L5": 0.2, "L2": 0.04})
-        self.assertIn("stress_residual", result)
-        self.assertIn("stress_residual_normalized", result)
-        self.assertIn("neural_entropy_used", result)
         self.assertEqual(result["stress_residual"], 0.0)
         self.assertEqual(result["stress_residual_normalized"], 0.0)
         self.assertEqual(result["descent_schema"], "great-scale.descent/v0.4.2")
+        evidence = result["fitness_evidence"]
+        self.assertEqual(evidence["schema"], "cyclekernel.fusion-evidence/v1")
+        self.assertIn("symbolic_score", evidence)
+        self.assertIn("neural_score", evidence)
+        self.assertIn("signed_eta", evidence)
+        self.assertIn("symbolic_neural_ratio", evidence)
+        self.assertEqual(
+            set(evidence["threshold_margins"]),
+            {"promote", "demote", "convergent_label", "survival_label"},
+        )
 
     def test_residual_is_normalized_and_changes_entropy(self):
         base = {"Core": 0.6, "L5": 0.2, "L2": 0.04}
@@ -30,34 +46,48 @@ class FusionStressTests(unittest.TestCase):
         result = apply_fusion("neutral", {"Core": 0.6, "L5": 0.2, "L2": 0.04})
         self.assertAlmostEqual(result["ns_fitness"], expected, places=4)
 
-
-
-    def test_previously_promoted_low_score_is_demoted_through_wrapper(self):
-        result = apply_fusion(
-            "survival",
-            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
-            colony={"promoted": 1},
+    def test_equal_geometric_mean_can_hide_different_channel_states(self):
+        # sqrt(.9*.4) == sqrt(.6*.6): the scalar projection is not injective.
+        unbalanced = summarize_fitness_channels(0.9, 0.4)
+        balanced = summarize_fitness_channels(0.6, 0.6)
+        self.assertAlmostEqual(unbalanced["ns_fitness"], balanced["ns_fitness"])
+        self.assertAlmostEqual(unbalanced["ns_fitness"], 0.6)
+        self.assertAlmostEqual(unbalanced["symbolic_neural_ratio"], 2.25)
+        self.assertAlmostEqual(balanced["symbolic_neural_ratio"], 1.0)
+        self.assertAlmostEqual(unbalanced["signed_eta"], 0.5)
+        self.assertAlmostEqual(balanced["signed_eta"], 0.0)
+        # With the same mood, equal scalar => same downstream mood_dot/decision,
+        # despite different underlying evidence.
+        self.assertAlmostEqual(fuse_mood(unbalanced["ns_fitness"], "neutral"),
+                               fuse_mood(balanced["ns_fitness"], "neutral"))
+        self.assertEqual(
+            promote_decision(fuse_mood(unbalanced["ns_fitness"], "neutral"))["action"],
+            promote_decision(fuse_mood(balanced["ns_fitness"], "neutral"))["action"],
         )
-        self.assertLess(result["mood_dot"], 0.28)
-        self.assertEqual(result["promote"]["action"], "demote")
 
-    def test_unpromoted_high_score_is_promoted_through_wrapper(self):
-        result = apply_fusion(
-            "convergent",
-            {"Core": 1.0, "L5": 0.0, "L2": 0.2},
-            colony={"promoted": 0},
-        )
-        self.assertGreaterEqual(result["mood_dot"], 0.62)
-        self.assertEqual(result["promote"]["action"], "promote")
+    def test_zero_neural_channel_has_explicit_undefined_ratio(self):
+        state = summarize_fitness_channels(0.7, 0.0)
+        self.assertFalse(state["ratio_defined"])
+        self.assertIsNone(state["symbolic_neural_ratio"])
+        self.assertEqual(state["ns_fitness"], 0.0)
 
-    def test_unpromoted_low_score_remains_held(self):
-        result = apply_fusion(
-            "survival",
-            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
-            colony={"promoted": 0},
+    def test_explicit_symbolic_inputs_are_marked(self):
+        belief = {"truth": 0.8, "deception": 0.2}
+        resources = {"attention": 100, "compute": 30, "memory_nodes": 5}
+        channels = fitness_channels(
+            belief=belief, resources=resources, core=0.8, entropy=0.2, coupling=0.1
         )
-        self.assertLess(result["mood_dot"], 0.62)
-        self.assertEqual(result["promote"]["action"], "hold")
+        self.assertEqual(channels["belief_source"], "provided")
+        self.assertEqual(channels["resource_source"], "provided")
+        self.assertAlmostEqual(channels["symbolic_score"], symbolic_score(belief, resources))
+        self.assertAlmostEqual(channels["neural_score"], neural_score(0.8, 0.2, 0.1))
+
+    def test_promotion_and_demotion_threshold_semantics(self):
+        self.assertEqual(promote_decision(0.62)["action"], "promote")
+        self.assertEqual(promote_decision(0.6199)["action"], "hold")
+        self.assertEqual(promote_decision(0.28, already_promoted=True)["action"], "hold")
+        self.assertEqual(promote_decision(0.2799, already_promoted=True)["action"], "demote")
+
 
 if __name__ == "__main__":
     unittest.main()
