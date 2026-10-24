@@ -169,6 +169,7 @@ class Universe:
                 mood_input=mood,
                 mood_output=label,
                 label_projection_threshold=label_projection_threshold,
+                metric_source="simulation_scheduler",
             )
             identity_state = build_fusion_identity_state(
                 mood_input=mood,
@@ -183,6 +184,7 @@ class Universe:
                 resources=civ["resources"],
                 stress_residual=residual,
                 descent_source="simulation_scheduler",
+                metric_source="simulation_scheduler",
             )
             state_id = fitness_state_id(identity_state)
             evidence["fusion_state_id"] = state_id
