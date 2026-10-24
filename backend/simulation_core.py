@@ -3,17 +3,20 @@ CycleKernel Simulation Core with ChatMemoryBridge Integration
 Combines the simulation engine with memory-based chat interactions.
 NS fitness is fused into live mood and gates colony promotion.
 """
+import hmac
+import logging
+import os
+import time
+from datetime import datetime
+from threading import Lock
 
 import numpy as np
-from datetime import datetime
-import json
-import time
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
-import logging
 
+from descent_engine import DescentEngine, entropy_with_stress
 from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
 
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +29,9 @@ total_compute = Gauge("total_compute", "Total compute resources")
 chat_interactions = Counter("chat_interactions_total", "Total chat interactions processed")
 simulation_duration = Histogram("simulation_cycle_duration_seconds", "Time taken for simulation cycles")
 promoted_colonists = Gauge("promoted_colonists", "Civilizations promoted by fused NS mood")
+great_scale_descent_ticks = Counter("great_scale_descent_ticks_total", "Great Scale descent ticks executed")
+great_scale_descent_residual = Gauge("great_scale_descent_stress_residual", "Current Great Scale stress residual", ["universe_id"])
+great_scale_descent_x = Gauge("great_scale_descent_x", "Current Great Scale descent coordinate", ["universe_id"])
 
 app = Flask(__name__)
 CORS(app)
@@ -58,6 +64,9 @@ class Universe:
         self.myths = {}
         self.cycle_count = 0
         self.promote_log = []
+        # One scheduler-driven Great Scale tick per universe simulation cycle.
+        self.descent_engine = DescentEngine(start=1.0, k=0.5)
+        self._descent_state_lock = Lock()
 
     def add_civilization(self, civ_id):
         if civ_id not in self.civilizations:
@@ -98,7 +107,14 @@ class Universe:
         }
 
     def simulate_cycle(self):
-        self.cycle_count += 1
+        with self._descent_state_lock:
+            self.cycle_count += 1
+            descent_record = self.descent_engine.tick()
+        residual = descent_record["residual"]
+        great_scale_descent_ticks.inc()
+        great_scale_descent_residual.labels(universe_id=self.id).set(residual)
+        great_scale_descent_x.labels(universe_id=self.id).set(descent_record["x"])
+
         for civ in self.civilizations.values():
             if civ["state"] not in ("active", "promoted"):
                 continue
@@ -114,11 +130,13 @@ class Universe:
                 mood = "survival"
             elif civ["belief"]["truth"] > 0.62:
                 mood = "convergent"
+            base_entropy = 0.15 + (0.5 if mood == "survival" else 0.0)
+            entropy = entropy_with_stress(base_entropy, residual)
             fit = ns_fitness(
                 belief=civ["belief"],
                 resources=civ["resources"],
                 core=civ["belief"]["truth"],
-                entropy=0.15 + (0.5 if mood == "survival" else 0.0),
+                entropy=entropy,
                 coupling=0.08 if mood == "convergent" else 0.02,
             )
             fused = fuse_mood(fit, mood)
@@ -126,6 +144,9 @@ class Universe:
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
             civ["mood"] = mood if decision["action"] == "hold" else mood
+            civ["stress_residual"] = residual
+            civ["stress_residual_normalized"] = round(residual / 7.0, 8)
+            civ["neural_entropy_used"] = round(entropy, 8)
             if decision["action"] == "promote":
                 civ["promoted"] = True
                 civ["state"] = "promoted"
@@ -136,6 +157,18 @@ class Universe:
                 self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count})
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
+    def descent_snapshot(self, running=False):
+        return self.descent_engine.snapshot(running=running)
+
+    def scale_state_snapshot(self, running=False):
+        with self._descent_state_lock:
+            snapshot = self.descent_engine.snapshot(running=running)
+            return {
+                **snapshot,
+                "universe_id": self.id,
+                "cycle_count": self.cycle_count,
+                "stress_residual_normalized": snapshot["residualNormalized"],
+            }
 
 class CycleKernel:
     def __init__(self):
@@ -181,6 +214,7 @@ class CycleKernel:
                     "factions": u.factions,
                     "cycle_count": u.cycle_count,
                     "colony": u.colony_snapshot(),
+                    "descent": u.descent_snapshot(running=self.running),
                 }
                 for uid, u in self.universes.items()
             },
@@ -270,6 +304,21 @@ def get_state():
     return jsonify(kernel.get_state())
 
 
+@app.route("/api/v1/scale/state", methods=["GET"])
+def get_scale_state():
+    """Read-only Great Scale snapshot; fail closed unless a bearer token is configured."""
+    expected_token = os.environ.get("SCALE_API_TOKEN", "")
+    if not expected_token:
+        return jsonify({"status": "unavailable", "error": "SCALE_API_TOKEN is not configured"}), 503
+    provided = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(provided, f"Bearer {expected_token}"):
+        return jsonify({"status": "unauthorized"}), 401
+    universe = kernel.universes.get("U1") or next(iter(kernel.universes.values()), None)
+    if universe is None:
+        return jsonify({"status": "unavailable", "error": "no universe exists"}), 503
+    return jsonify(universe.scale_state_snapshot(running=kernel.running))
+
+
 @app.route("/colony", methods=["GET"])
 def colony():
     return jsonify(kernel.colony())
@@ -277,13 +326,14 @@ def colony():
 
 @app.route("/simulate/<int:cycles>", methods=["POST"])
 def simulate(cycles):
+    if cycles < 1 or cycles > 1000:
+        return jsonify({"status": "error", "message": "cycles must be between 1 and 1000"}), 400
     kernel.run_simulation(cycles)
-    return jsonify({"status": "success", "cycles": cycles, "colony": kernel.colony()})
+    return jsonify({"status": "success", "cycles": cycles, "colony": kernel.colony(), "descent": {uid: u.descent_snapshot(running=kernel.running) for uid, u in kernel.universes.items()}})
 
 
 @app.route("/chat/interact", methods=["POST"])
 def chat_interact():
-    from flask import request
     data = request.json or {}
     user_id = data.get("user_id", "anonymous")
     message = data.get("message", "")
