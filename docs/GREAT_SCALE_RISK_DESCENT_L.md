@@ -92,6 +92,22 @@ Therefore:
 4. Prefer exact expectation under a validated distribution family; otherwise report a conservative bound with declared assumptions. Add CVaR/expected-shortfall and a support-margin check where applicable.
 5. Keep this result advisory until the existing objective-sign convention and operational meanings of \(p\), \(v\), and \(A_\star\) are resolved.
 
+## Cross-layer control finding: descent must preserve prior state
+
+The fusion wrapper originally computed the prior-state flag as `promoted and fused >= PROMOTE_THRESHOLD`. That condition made the state transition internally inconsistent: when a previously promoted colony's score fell below the promotion threshold, the wrapper erased its prior promoted state before calling the transition function. The demotion rule (`fused < DEMOTE_THRESHOLD`) could therefore be bypassed and the wrapper return `hold`.
+
+The corrected branch passes the persisted state alone: `already_promoted=bool(colony.get("promoted", 0))`. The transition function then applies its own thresholds:
+
+```text
+prior state = promoted AND F < 0.28  -> demote
+prior state = not promoted AND F >= 0.62 -> promote
+otherwise -> hold
+```
+
+This is a control-theoretic lesson for the Great Scale map: **state and score are separate coordinates**. The score is the observation; prior promotion status is the state variable. Reconstructing state from the current score destroys hysteresis/transition semantics. Great Scale's stress residual can alter entropy and therefore fitness, so this bug is relevant even though the geometric residual is not the probabilistic risk variable (P) in the logarithmic-loss analysis.
+
+Regression tests for promoted-low-score demotion, unpromoted-high-score promotion, and unpromoted-low-score hold are now committed on the feature branch. The hosted workflow still reports failure with zero executed steps; these tests are added but not yet verified by a successful repository run.
+
 ## Test and verification record
 
 The upstream audit receipt reports `python descent50.py` **PASS 6/6**, earlier Descent XLV–XLIX checks passing their listed counts, and `python -m compileall -q .` passing in the audit package. Those are the receipt's reported results; this note does not claim to have rerun those scripts in the CycleKernal checkout.
