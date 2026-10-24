@@ -27,6 +27,7 @@ class CognitiveState:
     ns_fitness: float = 0.0
     mood_dot: float = 0.5
     genome_id: str = ""
+    fusion_state_id: str = ""
     colony: Dict = field(default_factory=dict)
     promote: Dict = field(default_factory=dict)
     fitness_evidence: Dict = field(default_factory=dict)
@@ -92,6 +93,7 @@ def map_metrics_to_traits(metrics: Dict, colony: Dict = None, metric_source: str
     state.mood_dot = fused["mood_dot"]
     state.mood = fused["mood"]
     state.genome_id = fused["genome_id"]
+    state.fusion_state_id = fused.get("fusion_state_id", "")
     state.colony = fused["colony"]
     state.promote = fused["promote"]
     state.fitness_evidence = fused.get("fitness_evidence", {})
