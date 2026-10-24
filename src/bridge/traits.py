@@ -29,17 +29,19 @@ class CognitiveState:
     genome_id: str = ""
     colony: Dict = field(default_factory=dict)
     promote: Dict = field(default_factory=dict)
+    fitness_evidence: Dict = field(default_factory=dict)
+    metric_source: str = "unavailable"
 
     def to_dict(self):
         return asdict(self)
 
-def map_metrics_to_traits(metrics: Dict, colony: Dict = None) -> CognitiveState:
+def map_metrics_to_traits(metrics: Dict, colony: Dict = None, metric_source: str = "unknown") -> CognitiveState:
     core = float(metrics.get("Core", metrics.get("core", 0.5)))
     l2 = float(metrics.get("L2", metrics.get("coupling", 0.0)))
     l5 = float(metrics.get("L5", metrics.get("entropy", 0.0)))
     u2 = float(metrics.get("U2", 0.0))
 
-    state = CognitiveState(metrics=metrics, entropy=l5, coupling=l2, core=core)
+    state = CognitiveState(metrics=metrics, entropy=l5, coupling=l2, core=core, metric_source=metric_source)
     traits, prompts = [], []
 
     if l5 > 0.8:
@@ -92,6 +94,7 @@ def map_metrics_to_traits(metrics: Dict, colony: Dict = None) -> CognitiveState:
     state.genome_id = fused["genome_id"]
     state.colony = fused["colony"]
     state.promote = fused["promote"]
+    state.fitness_evidence = fused.get("fitness_evidence", {})
     state.explanation += f" NS fitness {state.ns_fitness:.2f} fused into mood_dot {state.mood_dot:.2f} ({fused['promote']['action']})."
     if fused["promote"]["action"] == "promote":
         traits.append("Colony-Promote")
