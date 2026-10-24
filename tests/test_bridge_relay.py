@@ -50,6 +50,20 @@ class RelayProvenanceTests(unittest.TestCase):
         self.assertEqual(metrics["belief"]["truth"], 0.8)
         self.assertEqual(metrics["resources"]["compute"], 30)
 
+
+    def test_rejects_out_of_domain_belief_and_resource_values(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        with self.assertRaisesRegex(ValueError, "belief.truth must be finite and in"):
+            normalize_relay_metrics({**base, "belief": {"truth": 1.01}})
+        with self.assertRaisesRegex(ValueError, "belief.deception must be finite and in"):
+            normalize_relay_metrics({**base, "belief": {"truth": 0.5, "deception": float("nan")}})
+        with self.assertRaisesRegex(ValueError, "resources.attention must be finite and nonnegative"):
+            normalize_relay_metrics({**base, "resources": {"attention": -1}})
+        with self.assertRaisesRegex(ValueError, "resources.compute must be finite and nonnegative"):
+            normalize_relay_metrics({**base, "resources": {"compute": float("inf")}})
+        with self.assertRaisesRegex(ValueError, "resources.memory_nodes must be finite and nonnegative"):
+            normalize_relay_metrics({**base, "resources": {"memory_nodes": -0.5}})
+
     def test_rejects_invalid_optional_descent_residual(self):
         with self.assertRaisesRegex(ValueError, "stress_residual must be finite and in"):
             normalize_relay_metrics({
