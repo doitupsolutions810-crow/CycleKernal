@@ -265,6 +265,65 @@ class FusionStressTests(unittest.TestCase):
         )
 
 
+
+    def test_field_presence_and_unscored_belief_field_are_witnessed(self):
+        no_resource_keys = apply_fusion(
+            "neutral",
+            {
+                "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                "belief": {"truth": 0.5},
+                "resources": {},
+            },
+        )
+        explicit_zero_resources = apply_fusion(
+            "neutral",
+            {
+                "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                "belief": {"truth": 0.5},
+                "resources": {"attention": 0, "compute": 0, "memory_nodes": 0},
+            },
+        )
+        self.assertAlmostEqual(no_resource_keys["ns_fitness"], explicit_zero_resources["ns_fitness"])
+        self.assertNotEqual(
+            no_resource_keys["fusion_state_id"], explicit_zero_resources["fusion_state_id"]
+        )
+        self.assertFalse(
+            no_resource_keys["fitness_evidence"]["inputs"]["symbolic"]["field_presence"]["resource_attention"]
+        )
+        self.assertTrue(
+            explicit_zero_resources["fitness_evidence"]["inputs"]["symbolic"]["field_presence"]["resource_attention"]
+        )
+
+        low_deception = apply_fusion(
+            "neutral",
+            {
+                "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                "belief": {"truth": 0.5, "deception": 0.1},
+                "resources": {"attention": 0, "compute": 0, "memory_nodes": 0},
+            },
+        )
+        high_deception = apply_fusion(
+            "neutral",
+            {
+                "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                "belief": {"truth": 0.5, "deception": 0.9},
+                "resources": {"attention": 0, "compute": 0, "memory_nodes": 0},
+            },
+        )
+        # Deception is validated but not part of the current score formula;
+        # preserve it in the witness so equal scores don't imply equal inputs.
+        self.assertAlmostEqual(low_deception["ns_fitness"], high_deception["ns_fitness"])
+        self.assertNotEqual(low_deception["fusion_state_id"], high_deception["fusion_state_id"])
+        self.assertEqual(
+            low_deception["fitness_evidence"]["inputs"]["symbolic"]["deception"], 0.1
+        )
+        self.assertEqual(
+            high_deception["fitness_evidence"]["fusion_state_witness"]["belief_deception"], 0.9
+        )
+        self.assertTrue(
+            high_deception["fitness_evidence"]["inputs"]["symbolic"]["field_presence"]["belief_deception"]
+        )
+
     def test_all_fusion_copies_preserve_absent_vs_empty_semantics(self):
         root = Path(__file__).resolve().parents[1]
         copies = (
