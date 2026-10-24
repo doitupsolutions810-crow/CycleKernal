@@ -14,7 +14,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 import logging
 
-from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
+from ns_fusion import colony_genome, find_promotion_collisions, fuse_mood, genome_id, ns_components, promote_decision
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ def civ_template(civ_id):
         "promoted": False,
         "ns_fitness": 0.0,
         "mood_dot": 0.5,
+        "fusion_evidence": {},
         "mood": "neutral",
         "created_at": datetime.now().isoformat(),
     }
@@ -58,6 +59,8 @@ class Universe:
         self.myths = {}
         self.cycle_count = 0
         self.promote_log = []
+        # Capped per-cycle lineage: one record per active civilization fusion call.
+        self.fusion_log = []
 
     def add_civilization(self, civ_id):
         if civ_id not in self.civilizations:
@@ -83,6 +86,8 @@ class Universe:
             "dormant": len(dormant),
             "genome_id": genome,
             "mood_dot": round(mood_dot, 4),
+            "fusion_log": self.fusion_log[-100:],
+            "projection_collisions": find_promotion_collisions(self.promote_log[-500:]),
             "members": [
                 {
                     "id": c["id"],
@@ -92,6 +97,7 @@ class Universe:
                     "ns_fitness": c.get("ns_fitness", 0.0),
                     "mood_dot": c.get("mood_dot", 0.5),
                     "mood": c.get("mood", "neutral"),
+                    "fusion_evidence": c.get("fusion_evidence", {}),
                 }
                 for c in civs
             ],
@@ -114,26 +120,59 @@ class Universe:
                 mood = "survival"
             elif civ["belief"]["truth"] > 0.62:
                 mood = "convergent"
-            fit = ns_fitness(
+            components = ns_components(
                 belief=civ["belief"],
                 resources=civ["resources"],
                 core=civ["belief"]["truth"],
                 entropy=0.15 + (0.5 if mood == "survival" else 0.0),
                 coupling=0.08 if mood == "convergent" else 0.02,
             )
+            fit = components["ns_fitness"]
             fused = fuse_mood(fit, mood)
             decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
+            evidence = {
+                **components,
+                "mood_dot": fused,
+                "mood_threshold_distances": {
+                    "to_promote": fused - 0.62,
+                    "to_demote": fused - 0.28,
+                },
+            }
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
-            civ["mood"] = mood if decision["action"] == "hold" else mood
-            if decision["action"] == "promote":
-                civ["promoted"] = True
-                civ["state"] = "promoted"
-                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count})
-            elif decision["action"] == "demote":
-                civ["promoted"] = False
-                civ["state"] = "active"
-                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count})
+            civ["fusion_evidence"] = evidence
+            civ["symbolic_score"] = components["symbolic_score"]
+            civ["neural_score"] = components["neural_score"]
+            civ["channel_delta"] = components["channel_delta"]
+            civ["channel_gap"] = components["channel_gap"]
+            civ["mood"] = mood
+
+            fusion_event = {
+                "event_id": f"{self.id}:{self.cycle_count}:{civ['id']}",
+                "universe_id": self.id,
+                "civ_id": civ["id"],
+                "genome_id": civ.get("genome_id"),
+                "cycle": self.cycle_count,
+                "action": decision["action"],
+                "ns_fitness": fit,
+                "mood_dot": round(fused, 4),
+                "symbolic_score": components["symbolic_score"],
+                "neural_score": components["neural_score"],
+                "channel_delta": components["channel_delta"],
+                "channel_gap": components["channel_gap"],
+                "threshold_distances": components["threshold_distances"],
+                "mood_threshold_distances": evidence["mood_threshold_distances"],
+            }
+            self.fusion_log.append(fusion_event)
+            if len(self.fusion_log) > 1000:
+                self.fusion_log = self.fusion_log[-1000:]
+
+            if decision["action"] in ("promote", "demote"):
+                civ["promoted"] = decision["action"] == "promote"
+                civ["state"] = "promoted" if civ["promoted"] else "active"
+                self.promote_log.append(dict(fusion_event))
+                if len(self.promote_log) > 1000:
+                    self.promote_log = self.promote_log[-1000:]
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
 
