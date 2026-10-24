@@ -93,6 +93,11 @@ class RelayProvenanceTests(unittest.TestCase):
         self.assertEqual(evidence["belief_source"], "provided")
         self.assertEqual(evidence["resource_source"], "provided")
         self.assertEqual(evidence["inputs"]["symbolic"]["attention"], 0.0)
+        presence = evidence["inputs"]["symbolic"]["field_presence"]
+        self.assertTrue(presence["belief_mapping"])
+        self.assertFalse(presence["belief_truth"])
+        self.assertTrue(presence["resources_mapping"])
+        self.assertFalse(presence["resource_attention"])
         self.assertEqual(
             fitness_state_id(evidence["fusion_state_witness"]),
             state["fusion_state_id"],
