@@ -117,6 +117,10 @@ def fitness_channels(
     coupling: float = 0.0,
 ) -> Dict[str, Any]:
     """Compute symbolic and neural channels plus source metadata."""
+    if belief is not None and not isinstance(belief, Mapping):
+        raise ValueError("belief must be a mapping")
+    if resources is not None and not isinstance(resources, Mapping):
+        raise ValueError("resources must be a mapping")
     belief_provided = bool(belief)
     resources_provided = bool(resources)
     belief = belief or {"truth": 0.5, "deception": 0.5}
@@ -250,6 +254,7 @@ def build_fusion_identity_state(
     metric_source: str,
 ) -> Dict[str, Any]:
     """Canonical state material, keeping latent channels distinct from the scalar."""
+    validate_symbolic_inputs(belief, resources)
     effective_belief = belief or {"truth": 0.5, "deception": 0.5}
     effective_resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
     return {
@@ -307,8 +312,14 @@ def apply_fusion(
     metric_source = str(metrics.get("_metric_source", "unknown"))
     residual_normalized = normalized_stress_residual(residual)
     entropy = entropy_with_stress(base_entropy, residual)
-    belief = metrics.get("belief") if isinstance(metrics.get("belief"), Mapping) else None
-    resources = metrics.get("resources") if isinstance(metrics.get("resources"), Mapping) else None
+    belief_raw = metrics.get("belief")
+    resources_raw = metrics.get("resources")
+    if belief_raw is not None and not isinstance(belief_raw, Mapping):
+        raise ValueError("belief must be a mapping")
+    if resources_raw is not None and not isinstance(resources_raw, Mapping):
+        raise ValueError("resources must be a mapping")
+    belief = belief_raw if isinstance(belief_raw, Mapping) else None
+    resources = resources_raw if isinstance(resources_raw, Mapping) else None
 
     channels = fitness_channels(
         belief=belief,
