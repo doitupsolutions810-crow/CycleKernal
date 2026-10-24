@@ -69,3 +69,15 @@ The PR workflow runs:
 4. Python byte-compilation and Docker builds for both bridge variants.
 
 CI success and a live relay run are separate questions. Until the hosted workflow executes its steps and a configured relay is exercised, those outcomes must not be reported as verified.
+
+## State fingerprint and threshold projections
+
+The content identity is separate from a civilization's stable entity ID:
+
+- `fusion_state_id` is `fs-` plus a full SHA-256 digest of canonical JSON containing both channels, their ratio/imbalance, effective inputs, source labels, stress, schema, and input/output mood.
+- `genome_id` remains the familiar short `gn-` identifier for a state when there is no externally supplied persistent colony identity; an explicitly supplied persistent colony ID remains the entity identity.
+- `mood_label_projected` records when the continuous fused value changes the categorical mood, including the threshold responsible. The threshold value and decision policy remain unchanged.
+
+This makes two distinct forms of information loss visible: (1) the geometric-mean projection `(s,n) -> sqrt(s*n)`, and (2) the downstream categorical projection `mood_dot -> mood label`. Identical scalar values can have distinct `fusion_state_id` fingerprints; a label should never be used to reconstruct its underlying score or channels.
+
+Relay `metric_source` is an operational provenance label, not cryptographic proof that the relay is trusted. The current transport code accepts an operator-configured WebSocket URL and validates its payload schema/ranges. Production deployment still needs a protected relay endpoint (for example, TLS plus authenticated workload identity/mTLS), secret management, and network policy. A value's claimed `descent_schema` does not authenticate the publisher.
