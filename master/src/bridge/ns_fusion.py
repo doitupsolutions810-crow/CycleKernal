@@ -170,8 +170,16 @@ def build_fitness_evidence(
     mood_output: str = "neutral",
     label_projection_threshold: Optional[str] = None,
     metric_source: str = "unknown",
+    core: float = 0.5,
+    base_entropy: float = 0.0,
+    coupling: float = 0.0,
+    belief: Optional[Mapping[str, Any]] = None,
+    resources: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a JSON-safe companion record; it does not alter decision policy."""
+    validate_symbolic_inputs(belief, resources)
+    effective_belief = {"truth": 0.5, "deception": 0.5} if belief is None else belief
+    effective_resources = {"attention": 50, "compute": 20, "memory_nodes": 1} if resources is None else resources
     thresholds = {
         "promote": PROMOTE_THRESHOLD,
         "demote": DEMOTE_THRESHOLD,
@@ -198,6 +206,28 @@ def build_fitness_evidence(
         "mood_label_projected": mood_input != mood_output,
         "label_projection_threshold": label_projection_threshold,
         "metric_source": metric_source,
+        "inputs": {
+            "symbolic": {
+                "truth": float(effective_belief.get("truth", 0.5)),
+                "attention": float(effective_resources.get("attention", 0.0)),
+                "compute": float(effective_resources.get("compute", 0.0)),
+                "memory_nodes": float(effective_resources.get("memory_nodes", 0.0)),
+                "belief_source": channels.get("belief_source", "derived"),
+                "resource_source": channels.get("resource_source", "derived"),
+            },
+            "neural": {
+                "core": float(core),
+                "base_entropy": float(base_entropy),
+                "neural_entropy_used": float(neural_entropy_used),
+                "coupling": float(coupling),
+            },
+            "great_scale": {
+                "stress_residual": float(stress_residual),
+                "stress_residual_normalized": float(stress_residual_normalized),
+                "descent_schema": DESCENT_SCHEMA,
+                "descent_source": descent_source,
+            },
+        },
         "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "threshold_distances": {
             name: round(abs(float(fused) - threshold), 6)
@@ -353,6 +383,11 @@ def apply_fusion(
         mood_output=label,
         label_projection_threshold=label_projection_threshold,
         metric_source=metric_source,
+        core=core,
+        base_entropy=base_entropy,
+        coupling=coupling,
+        belief=belief,
+        resources=resources,
     )
     identity_state = build_fusion_identity_state(
         mood_input=state_mood,
