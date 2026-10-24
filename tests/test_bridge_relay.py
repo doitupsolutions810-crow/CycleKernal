@@ -28,6 +28,38 @@ class RelayProvenanceTests(unittest.TestCase):
         metrics = normalize_relay_metrics('{"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7}')
         self.assertEqual(metrics["Core"], 0.4)
 
+    def test_rejects_duplicate_json_keys_before_object_construction(self):
+        # JSON object construction is normally last-key-wins; relay ingestion
+        # must reject this lossy parse before metrics reach scoring.
+        with self.assertRaisesRegex(ValueError, "duplicate JSON object key: Core"):
+            normalize_relay_metrics(
+                '{"Core":0.4,"Core":0.8,"U2":0.2,"L2":0.03,"L5":0.7}'
+            )
+        with self.assertRaisesRegex(ValueError, "duplicate JSON object key: truth"):
+            normalize_relay_metrics(
+                '{"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7,'
+                '"belief":{"truth":0.4,"truth":0.9}}'
+            )
+
+    def test_rejects_conflicting_or_invalid_metric_aliases(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7}
+        with self.assertRaisesRegex(ValueError, "Core aliases disagree"):
+            normalize_relay_metrics({**base, "core": 0.5})
+        with self.assertRaisesRegex(ValueError, "L2 aliases disagree"):
+            normalize_relay_metrics({**base, "coupling": 0.08})
+        with self.assertRaisesRegex(ValueError, "alias core must be a JSON number"):
+            normalize_relay_metrics({**base, "core": "0.4"})
+        with self.assertRaisesRegex(ValueError, "alias entropy must be a JSON number"):
+            normalize_relay_metrics({**base, "entropy": True})
+
+        # Equal canonical/legacy values remain backward-compatible.
+        accepted = normalize_relay_metrics({
+            **base, "core": 0.4, "coupling": 0.03, "entropy": 0.7
+        })
+        self.assertEqual(accepted["Core"], 0.4)
+        self.assertEqual(accepted["L2"], 0.03)
+        self.assertEqual(accepted["L5"], 0.7)
+
     def test_rejects_incomplete_payload(self):
         with self.assertRaisesRegex(ValueError, "U2 is required"):
             normalize_relay_metrics({"Core": 0.4, "L2": 0.03, "L5": 0.7})
@@ -80,6 +112,12 @@ class RelayProvenanceTests(unittest.TestCase):
                         with self.subTest(bridge=name, value=invalid):
                             with self.assertRaisesRegex(ValueError, "relay metric Core must be a JSON number"):
                                 module.normalize_relay_metrics({**base, "Core": invalid})
+                    with self.assertRaisesRegex(ValueError, "Core aliases disagree"):
+                        module.normalize_relay_metrics({**base, "core": 0.5})
+                    with self.assertRaisesRegex(ValueError, "duplicate JSON object key: Core"):
+                        module.normalize_relay_metrics(
+                            '{"Core":0.4,"Core":0.8,"U2":0.2,"L2":0.03,"L5":0.7}'
+                        )
                     with self.assertRaisesRegex(ValueError, "relay stress_residual must be a JSON number"):
                         module.normalize_relay_metrics({
                             **base,
