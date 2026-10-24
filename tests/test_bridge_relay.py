@@ -70,6 +70,8 @@ class RelayProvenanceTests(unittest.TestCase):
         state = map_metrics_to_traits(metrics, metric_source="relay")
         payload = state.to_dict()
         self.assertEqual(payload["metric_source"], "relay")
+        self.assertTrue(payload["fusion_state_id"])
+        self.assertEqual(payload["fitness_evidence"]["fusion_state_id"], payload["fusion_state_id"])
         self.assertIn("symbolic_score", payload["fitness_evidence"])
         self.assertIn("neural_score", payload["fitness_evidence"])
         self.assertIn("signed_eta", payload["fitness_evidence"])
