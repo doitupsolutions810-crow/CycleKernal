@@ -14,7 +14,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 import logging
 
-from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
+from ns_fusion import (build_companion_channel, colony_genome, fuse_mood, fusion_components, genome_id, ns_fitness, promote_decision)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -92,6 +92,7 @@ class Universe:
                     "ns_fitness": c.get("ns_fitness", 0.0),
                     "mood_dot": c.get("mood_dot", 0.5),
                     "mood": c.get("mood", "neutral"),
+                    "companion_channel": c.get("companion_channel", {}),
                 }
                 for c in civs
             ],
@@ -114,15 +115,28 @@ class Universe:
                 mood = "survival"
             elif civ["belief"]["truth"] > 0.62:
                 mood = "convergent"
-            fit = ns_fitness(
+            core = civ["belief"]["truth"]
+            entropy = 0.15 + (0.5 if mood == "survival" else 0.0)
+            coupling = 0.08 if mood == "convergent" else 0.02
+            components = fusion_components(
                 belief=civ["belief"],
                 resources=civ["resources"],
-                core=civ["belief"]["truth"],
-                entropy=0.15 + (0.5 if mood == "survival" else 0.0),
-                coupling=0.08 if mood == "convergent" else 0.02,
+                core=core,
+                entropy=entropy,
+                coupling=coupling,
             )
+            fit = components["ns_fitness"]
             fused = fuse_mood(fit, mood)
-            decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
+            already_promoted = bool(civ.get("promoted"))
+            decision = promote_decision(fused, already_promoted=already_promoted)
+            civ["companion_channel"] = build_companion_channel(
+                components=components,
+                fused=fused,
+                state_mood=mood,
+                decision=decision,
+                telemetry_source="cyclekernel-simulation",
+                already_promoted=already_promoted,
+            )
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
             civ["mood"] = mood if decision["action"] == "hold" else mood
