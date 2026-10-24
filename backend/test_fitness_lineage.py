@@ -22,6 +22,21 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
         self.assertEqual(fitness_state_id(evidence["fusion_state_witness"]), civ["fusion_state_id"])
         self.assertEqual(universe.fusion_log[-1]["fitness_evidence"], evidence)
+        symbolic = evidence["inputs"]["symbolic"]
+        witness = evidence["fusion_state_witness"]
+        self.assertTrue(all(symbolic["field_presence"].values()))
+        self.assertEqual(symbolic["belief_source"], "provided")
+        self.assertEqual(symbolic["resource_source"], "provided")
+        self.assertEqual(symbolic["truth"], civ["belief"]["truth"])
+        self.assertEqual(symbolic["deception"], civ["belief"]["deception"])
+        self.assertEqual(symbolic["attention"], civ["resources"]["attention"])
+        self.assertEqual(symbolic["compute"], civ["resources"]["compute"])
+        self.assertEqual(symbolic["memory_nodes"], civ["resources"]["memory_nodes"])
+        self.assertEqual(witness["belief_truth"], symbolic["truth"])
+        self.assertEqual(witness["belief_deception"], symbolic["deception"])
+        self.assertEqual(witness["resource_attention"], symbolic["attention"])
+        self.assertEqual(witness["resource_compute"], symbolic["compute"])
+        self.assertEqual(witness["resource_memory_nodes"], symbolic["memory_nodes"])
 
     def test_lineage_history_is_bounded(self):
         universe = Universe("bounded-lineage")
