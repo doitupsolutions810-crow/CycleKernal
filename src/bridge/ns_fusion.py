@@ -83,8 +83,8 @@ def fitness_channels(
     coupling: float = 0.0,
 ) -> Dict[str, Any]:
     """Compute symbolic and neural channels plus source metadata."""
-    belief_provided = belief is not None
-    resources_provided = resources is not None
+    belief_provided = bool(belief)
+    resources_provided = bool(resources)
     belief = belief or {"truth": 0.5, "deception": 0.5}
     resources = resources or {"attention": 50, "compute": 20, "memory_nodes": 1}
     return {
