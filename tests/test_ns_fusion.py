@@ -66,6 +66,8 @@ class FusionTests(unittest.TestCase):
         self.assertAlmostEqual(result["symbolic_score"], expected["symbolic_score"])
         self.assertAlmostEqual(result["neural_score"], expected["neural_score"])
         self.assertEqual(set(result["threshold_distances"]), set(expected["threshold_distances"]))
+        self.assertEqual(result["channel_provenance"]["symbolic"]["source"], "belief+resources")
+        self.assertTrue(result["channel_provenance"]["symbolic"]["complete"])
 
     def test_apply_fusion_does_not_suppress_demotion(self):
         result = apply_fusion(
