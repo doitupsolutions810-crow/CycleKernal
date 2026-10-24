@@ -142,11 +142,32 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertEqual(snap["fusion_history"][-1]["fusion_state_id"], member["fusion_state_id"])
         self.assertEqual(civ["fusion_state_id"], member["fusion_state_id"])
 
-    def test_cycle_kernel_state_contains_descent_snapshot(self):
+    def test_cycle_kernel_state_contains_cycle_aligned_descent_and_lineage(self):
         kernel.run_simulation(1)
         state = kernel.get_state()
-        self.assertIn("descent", state["universes"]["U1"])
-        self.assertEqual(state["universes"]["U1"]["descent"]["schema"], "great-scale.descent/v0.4.2")
+        universe = state["universes"]["U1"]
+        self.assertIn("descent", universe)
+        self.assertEqual(universe["descent"]["schema"], "great-scale.descent/v0.4.2")
+        self.assertEqual(universe["cycle_count"], universe["descent"]["t"])
+        self.assertEqual(universe["cycle_count"], universe["colony"]["cycle_count"])
+        self.assertTrue(universe["colony"]["fusion_history"])
+        latest = universe["colony"]["fusion_history"][-1]
+        member = next(row for row in universe["colony"]["members"] if row["id"] == latest["civ_id"])
+        self.assertEqual(latest["fusion_state_id"], member["fusion_state_id"])
+        self.assertEqual(latest["fitness_evidence"]["fusion_state_id"], member["fitness_evidence"]["fusion_state_id"])
+
+    def test_state_snapshot_is_detached_from_live_nested_dictionaries(self):
+        universe = Universe("detached-state")
+        civ = universe.add_civilization("test-civ")
+        universe.simulate_cycle()
+        before = civ["belief"]["truth"]
+        snapshot = universe.state_snapshot()
+        snapshot["civilizations"]["test-civ"]["belief"]["truth"] = 0.123
+        snapshot["colony"]["members"][0]["fitness_evidence"]["symbolic_score"] = -1
+        after = universe.state_snapshot()
+        self.assertEqual(civ["belief"]["truth"], before)
+        self.assertNotEqual(after["civilizations"]["test-civ"]["belief"]["truth"], 0.123)
+        self.assertGreaterEqual(after["colony"]["members"][0]["fitness_evidence"]["symbolic_score"], 0.0)
 
     def test_scale_state_endpoint_fails_closed_without_token(self):
         client = app.test_client()
