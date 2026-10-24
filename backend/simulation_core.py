@@ -17,7 +17,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from descent_engine import DescentEngine, entropy_with_stress
-from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
+from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fitness_evidence, promote_decision)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ def civ_template(civ_id):
         "ns_fitness": 0.0,
         "mood_dot": 0.5,
         "mood": "neutral",
+        "fitness_evidence": {},
         "created_at": datetime.now().isoformat(),
     }
     civ["genome_id"] = genome_id(f"{civ_id}:{faction}")
@@ -64,6 +65,8 @@ class Universe:
         self.myths = {}
         self.cycle_count = 0
         self.promote_log = []
+        self.fusion_log = []
+        self.max_fusion_log = 500
         # One scheduler-driven Great Scale tick per universe simulation cycle.
         self.descent_engine = DescentEngine(start=1.0, k=0.5)
         self._descent_state_lock = Lock()
@@ -101,9 +104,12 @@ class Universe:
                     "ns_fitness": c.get("ns_fitness", 0.0),
                     "mood_dot": c.get("mood_dot", 0.5),
                     "mood": c.get("mood", "neutral"),
+                    "fitness_evidence": c.get("fitness_evidence", {}),
                 }
                 for c in civs
             ],
+            "fusion_history": self.fusion_log[-100:],
+            "promotion_history": self.promote_log[-100:],
         }
 
     def simulate_cycle(self):
@@ -132,29 +138,50 @@ class Universe:
                 mood = "convergent"
             base_entropy = 0.15 + (0.5 if mood == "survival" else 0.0)
             entropy = entropy_with_stress(base_entropy, residual)
-            fit = ns_fitness(
+            channels = fitness_channels(
                 belief=civ["belief"],
                 resources=civ["resources"],
                 core=civ["belief"]["truth"],
                 entropy=entropy,
                 coupling=0.08 if mood == "convergent" else 0.02,
             )
+            fit = channels["ns_fitness"]
             fused = fuse_mood(fit, mood)
             decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
+            evidence = build_fitness_evidence(
+                channels,
+                fused,
+                stress_residual=residual,
+                stress_residual_normalized=residual / 7.0,
+                neural_entropy_used=entropy,
+            )
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
-            civ["mood"] = mood if decision["action"] == "hold" else mood
+            civ["mood"] = mood
+            civ["fitness_evidence"] = evidence
             civ["stress_residual"] = residual
             civ["stress_residual_normalized"] = round(residual / 7.0, 8)
             civ["neural_entropy_used"] = round(entropy, 8)
+            fusion_event = {
+                "cycle": self.cycle_count,
+                "civ_id": civ["id"],
+                "genome_id": civ.get("genome_id", ""),
+                "ns_fitness": round(fit, 4),
+                "mood_dot": round(fused, 4),
+                "action": decision["action"],
+                "fitness_evidence": evidence,
+            }
+            self.fusion_log.append(fusion_event)
+            if len(self.fusion_log) > self.max_fusion_log:
+                del self.fusion_log[:-self.max_fusion_log]
             if decision["action"] == "promote":
                 civ["promoted"] = True
                 civ["state"] = "promoted"
-                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count})
+                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count, "fitness_evidence": evidence})
             elif decision["action"] == "demote":
                 civ["promoted"] = False
                 civ["state"] = "active"
-                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count})
+                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count, "fitness_evidence": evidence})
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
     def descent_snapshot(self, running=False):
