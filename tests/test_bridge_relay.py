@@ -115,7 +115,7 @@ class RelayProvenanceTests(unittest.TestCase):
         state = map_metrics_to_traits(metrics, metric_source="relay")
         payload = state.to_dict()
         self.assertEqual(payload["metric_source"], "relay")
-        self.assertTrue(payload["promotion_decision_id"])
+        self.assertTrue(payload["promotion_decision_id"].startswith("pd-"))
         self.assertTrue(payload["fusion_state_id"])
         self.assertEqual(payload["fitness_evidence"]["fusion_state_id"], payload["fusion_state_id"])
         self.assertEqual(payload["fitness_evidence"]["promotion_decision_id"], payload["promotion_decision_id"])
