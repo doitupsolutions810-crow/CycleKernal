@@ -51,10 +51,12 @@ def validate_symbolic_inputs(
         for field in ("truth", "deception"):
             if field not in belief:
                 continue
-            try:
-                value = float(belief[field])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"belief.{field} must be numeric") from exc
+            raw_value = belief[field]
+            # JSON booleans are not numeric metric values in this schema, and
+            # coercible strings must not bypass typed-input validation.
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                raise ValueError(f"belief.{field} must be a JSON number")
+            value = float(raw_value)
             if not isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"belief.{field} must be finite and in [0, 1]")
 
@@ -64,10 +66,10 @@ def validate_symbolic_inputs(
         for field in ("attention", "compute", "memory_nodes"):
             if field not in resources:
                 continue
-            try:
-                value = float(resources[field])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"resources.{field} must be numeric") from exc
+            raw_value = resources[field]
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                raise ValueError(f"resources.{field} must be a JSON number")
+            value = float(raw_value)
             if not isfinite(value) or value < 0.0:
                 raise ValueError(f"resources.{field} must be finite and nonnegative")
 
