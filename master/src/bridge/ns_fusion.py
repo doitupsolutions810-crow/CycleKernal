@@ -8,7 +8,7 @@ Great Scale residual used in the neural entropy path.
 from __future__ import annotations
 
 import hashlib
-from math import sqrt
+from math import isfinite, sqrt
 from typing import Any, Dict, Mapping, Optional
 
 from descent_engine import entropy_with_stress, normalized_stress_residual
@@ -32,7 +32,10 @@ MOOD_SCORE = {
 
 
 def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, float(value)))
+    value = float(value)
+    if not isfinite(value):
+        raise ValueError("fusion values must be finite")
+    return max(lo, min(hi, value))
 
 
 def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> float:
@@ -56,14 +59,17 @@ def summarize_fitness_channels(symbolic: float, neural: float) -> Dict[str, Any]
     """Preserve the coordinates of the legacy geometric-mean projection."""
     symbolic = _clip(symbolic)
     neural = _clip(neural)
-    ratio_defined = neural > 0.0
+    ratio = symbolic / neural if neural > 0.0 else None
+    ratio_defined = ratio is not None and isfinite(ratio)
+    if not ratio_defined:
+        ratio = None
     return {
         "symbolic_score": symbolic,
         "neural_score": neural,
         "ns_fitness": sqrt(symbolic * neural),
         "signed_eta": symbolic - neural,
         "absolute_channel_gap": abs(symbolic - neural),
-        "symbolic_neural_ratio": symbolic / neural if ratio_defined else None,
+        "symbolic_neural_ratio": ratio,
         "ratio_defined": ratio_defined,
     }
 
@@ -120,6 +126,7 @@ def build_fitness_evidence(
     stress_residual: float = 0.0,
     stress_residual_normalized: float = 0.0,
     neural_entropy_used: float = 0.0,
+    descent_source: str = "default_zero",
 ) -> Dict[str, Any]:
     """Build a JSON-safe companion record; it does not alter decision policy."""
     thresholds = {
@@ -155,6 +162,7 @@ def build_fitness_evidence(
         "stress_residual_normalized": round(float(stress_residual_normalized), 8),
         "neural_entropy_used": round(float(neural_entropy_used), 8),
         "descent_schema": DESCENT_SCHEMA,
+        "descent_source": descent_source,
     }
 
 
@@ -186,6 +194,7 @@ def apply_fusion(
     base_entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
     coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
     residual = float(metrics.get("stress_residual", 0.0))
+    descent_source = "provided" if "stress_residual" in metrics else "default_zero"
     residual_normalized = normalized_stress_residual(residual)
     entropy = entropy_with_stress(base_entropy, residual)
     belief = metrics.get("belief") if isinstance(metrics.get("belief"), Mapping) else None
@@ -213,6 +222,7 @@ def apply_fusion(
         stress_residual=residual,
         stress_residual_normalized=residual_normalized,
         neural_entropy_used=entropy,
+        descent_source=descent_source,
     )
     return {
         "ns_fitness": round(fit, 4),
