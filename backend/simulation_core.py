@@ -83,6 +83,11 @@ class Universe:
         return self.civilizations[civ_id]
 
     def colony_snapshot(self):
+        """Return one internally consistent civilization/lineage snapshot."""
+        with self._descent_state_lock:
+            return self._colony_snapshot_locked()
+
+    def _colony_snapshot_locked(self):
         civs = list(self.civilizations.values())
         promoted = [c for c in civs if c.get("promoted")]
         active = [c for c in civs if c.get("state") in ("active", "promoted")]
@@ -116,9 +121,13 @@ class Universe:
         }
 
     def simulate_cycle(self):
+        """Advance geometry, fusion, and lineage under one snapshot lock."""
         with self._descent_state_lock:
-            self.cycle_count += 1
-            descent_record = self.descent_engine.tick()
+            self._simulate_cycle_locked()
+
+    def _simulate_cycle_locked(self):
+        self.cycle_count += 1
+        descent_record = self.descent_engine.tick()
         residual = descent_record["residual"]
         great_scale_descent_ticks.inc()
         great_scale_descent_residual.labels(universe_id=self.id).set(residual)
@@ -225,7 +234,8 @@ class Universe:
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
     def descent_snapshot(self, running=False):
-        return self.descent_engine.snapshot(running=running)
+        with self._descent_state_lock:
+            return self.descent_engine.snapshot(running=running)
 
     def scale_state_snapshot(self, running=False):
         with self._descent_state_lock:
