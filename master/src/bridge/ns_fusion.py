@@ -22,6 +22,7 @@ CONVERGENT_LABEL_THRESHOLD = 0.70
 SURVIVAL_LABEL_THRESHOLD = 0.30
 FITNESS_EVIDENCE_SCHEMA = "cyclekernel.fusion-evidence/v1"
 DESCENT_SCHEMA = "great-scale.descent/v0.4.2"
+PROMOTION_DECISION_SCHEMA = "cyclekernel.promotion-decision/v1"
 
 MOOD_SCORE = {
     "survival": 0.15,
@@ -354,6 +355,7 @@ def build_fusion_receipt(
     coupling: float = 0.0,
     belief: Optional[Mapping[str, Any]] = None,
     resources: Optional[Mapping[str, Any]] = None,
+    already_promoted: bool = False,
 ) -> Dict[str, Any]:
     """Build evidence and its fingerprint witness from one identical input context.
 
@@ -395,10 +397,27 @@ def build_fusion_receipt(
     state_id = fitness_state_id(witness)
     evidence["fusion_state_id"] = state_id
     evidence["fusion_state_witness"] = witness
+
+    # Promotion has hysteresis: the relevant threshold depends on the prior state.
+    decision = promote_decision(fused, already_promoted=already_promoted)
+    decision_witness = {
+        "schema": PROMOTION_DECISION_SCHEMA,
+        "fusion_state_id": state_id,
+        "fused": float(fused),
+        "already_promoted": bool(already_promoted),
+        "action": str(decision["action"]),
+        "threshold": float(decision["threshold"]),
+    }
+    decision_id = fitness_state_id(decision_witness)
+    evidence["promotion_decision_id"] = decision_id
+    evidence["promotion_decision_witness"] = decision_witness
     return {
         "fusion_state_id": state_id,
         "fitness_evidence": evidence,
         "fusion_state_witness": witness,
+        "decision": decision,
+        "promotion_decision_id": decision_id,
+        "promotion_decision_witness": decision_witness,
     }
 
 
@@ -412,7 +431,7 @@ def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, 
         return {"action": "demote", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
     if (not already_promoted) and fused >= PROMOTE_THRESHOLD:
         return {"action": "promote", "fused": round(fused, 4), "threshold": PROMOTE_THRESHOLD}
-    return {"action": "hold", "fused": round(fused, 4), "threshold": PROMOTE_THRESHOLD}
+    return {"action": "hold", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD if already_promoted else PROMOTE_THRESHOLD}
 
 
 def apply_fusion(
@@ -447,7 +466,7 @@ def apply_fusion(
     fit = channels["ns_fitness"]
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})
-    decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0)))
+    already_promoted = bool(colony.get("promoted", 0))
     label = state_mood
     label_projection_threshold = None
     if fused >= CONVERGENT_LABEL_THRESHOLD and state_mood == "neutral":
@@ -473,10 +492,12 @@ def apply_fusion(
         coupling=coupling,
         belief=belief,
         resources=resources,
+        already_promoted=already_promoted,
     )
     state_id = receipt["fusion_state_id"]
     evidence = receipt["fitness_evidence"]
     identity_state = receipt["fusion_state_witness"]
+    decision = receipt["decision"]
     derived_genome_id = fitness_state_genome_id(identity_state)
     return {
         "ns_fitness": round(fit, 4),
@@ -487,6 +508,7 @@ def apply_fusion(
         "promote": decision,
         "genome_id": colony.get("genome_id") or derived_genome_id,
         "fusion_state_id": state_id,
+        "promotion_decision_id": receipt["promotion_decision_id"],
         "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "fitness_evidence": evidence,
         "stress_residual": residual,
