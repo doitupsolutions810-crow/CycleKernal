@@ -53,7 +53,8 @@ async def subscribe_to_relay():
                 "L4": 0.28,
                 "L5": 0.65,
                 "entropy": 0.65,
-                "coupling": 0.07
+                "coupling": 0.07,
+                "telemetry_source": "synthetic"
             })
             await asyncio.sleep(5)
         except Exception as e:
