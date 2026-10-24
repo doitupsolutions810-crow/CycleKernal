@@ -408,3 +408,8 @@ The Descent CVI guard also runs at both relay ingress parsers, before type infor
 ## Descent CVII — validation frontier
 
 [Descent CVII](docs/DESCENT_CVII_VALIDATION_FRONTIER.md) formalizes the root cause behind the relay-normalization bypass: when a non-injective transform maps different raw types to the same value, downstream validation cannot recover the distinction. Both bridge parsers now validate raw numeric types before float normalization, with cross-copy regressions. Great Scale mapping: System 30 — validation frontier.
+
+
+## Descent CVIII — alias concordance
+
+Relay ingestion now rejects repeated JSON object keys and validates all simultaneously present canonical/legacy metric spellings. Matching aliases remain compatible; contradictory or invalid secondary aliases fail closed. See [Descent CVIII](docs/DESCENT_CVIII_ALIAS_CONCORDANCE.md). This is a data-integrity rule, not relay authentication.
