@@ -133,9 +133,11 @@ def colony_genome(members: list) -> str:
 
 
 def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, Any]:
-    if already_promoted and fused < DEMOTE_THRESHOLD:
-        return {"action": "demote", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
-    if (not already_promoted) and fused >= PROMOTE_THRESHOLD:
+    if already_promoted:
+        if fused < DEMOTE_THRESHOLD:
+            return {"action": "demote", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
+        return {"action": "hold", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
+    if fused >= PROMOTE_THRESHOLD:
         return {"action": "promote", "fused": round(fused, 4), "threshold": PROMOTE_THRESHOLD}
     return {"action": "hold", "fused": round(fused, 4), "threshold": PROMOTE_THRESHOLD}
 
