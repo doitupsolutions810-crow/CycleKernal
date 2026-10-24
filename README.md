@@ -372,3 +372,6 @@ For issues, questions, or contributions:
 ## Descent C — typed missingness and source-preserving fusion
 
 [Descent C](docs/DESCENT_C_TYPED_MISSINGNESS.md) distinguishes absent symbolic inputs from explicitly empty mappings. The fusion baseline and schema stay backward-compatible for absent inputs, while explicit empty objects remain visible in source metadata and the canonical state witness.
+
+
+[Descent CI — Field-presence closure](docs/DESCENT_CI_WITNESS_COMPLETENESS.md) extends System 25 by preserving recognized field presence and validated-but-unscored input fields in the fusion witness. Equal score no longer implies equal supplied state.
