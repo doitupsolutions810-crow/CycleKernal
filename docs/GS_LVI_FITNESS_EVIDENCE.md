@@ -114,3 +114,8 @@ A common `build_fusion_receipt` constructor now creates the evidence projection 
 ## Descent CIV — promotion-context closure
 
 Promotion is stateful hysteresis: the upper threshold `0.62` applies to an unpromoted civilization, whereas the lower threshold `0.28` governs demotion of an already-promoted one. A held, already-promoted state now reports `0.28` as its active threshold. The canonical decision witness and type-distinct `pd-` digest are stored separately from the `fs-` fusion-state fingerprint and included in simulation lineage and bridge responses. This preserves the legacy fitness score and policy actions while making the decision context auditable. See [Descent CIV](DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md).
+
+
+## Descent CVI — typed numerical admission
+
+Nested symbolic inputs and top-level `Core`/`L5`/`L2`/`stress_residual` now reject booleans and numeric strings before numeric conversion. Python's `float(True)` evaluates to `1.0`, so coercion alone does not establish that a value has the expected schema type. The shared `_json_number` helper is mirrored in the backend and both bridge copies and is covered by cross-copy regressions. The legacy score formula and thresholds are unchanged. See [Descent CVI](DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md).
