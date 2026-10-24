@@ -9,6 +9,7 @@ services:
       - cyclekernel-network
     environment:
       - RELAY_URL=ws://ws-relay:8081/ws/out
+      - ALLOW_SYNTHETIC_RELAY=0
     restart: unless-stopped
 
 networks:

@@ -9,6 +9,10 @@ on:
       - "backend/test_descent_engine.py"
       - "backend/test_ns_fusion.py"
       - "backend/test_cyclekernel_descent.py"
+      - "backend/test_fitness_lineage.py"
+      - "src/bridge/**"
+      - "master/src/bridge/**"
+      - "tests/test_bridge_relay.py"
       - ".github/workflows/great-scale-descent.yml"
   push:
     branches: [main]
@@ -19,6 +23,10 @@ on:
       - "backend/test_descent_engine.py"
       - "backend/test_ns_fusion.py"
       - "backend/test_cyclekernel_descent.py"
+      - "backend/test_fitness_lineage.py"
+      - "src/bridge/**"
+      - "master/src/bridge/**"
+      - "tests/test_bridge_relay.py"
       - ".github/workflows/great-scale-descent.yml"
 
 jobs:
@@ -34,6 +42,17 @@ jobs:
       - name: Install simulation dependencies
         run: python -m pip install -r requirements-sim.txt
         working-directory: backend
-      - name: Run descent, fusion, and scheduler integration tests
-        run: python -m unittest -v test_descent_engine test_ns_fusion test_cyclekernel_descent
+      - name: Run descent, fusion, scheduler, and lineage tests
+        run: python -m unittest -v test_descent_engine test_ns_fusion test_cyclekernel_descent test_fitness_lineage
         working-directory: backend
+      - name: Install bridge dependencies
+        run: python -m pip install -r requirements.txt
+        working-directory: src/bridge
+      - name: Compile Python runtimes
+        run: python -m compileall -q backend src/bridge master/src/bridge tests
+      - name: Test live-relay parsing and provenance
+        run: python -m unittest discover -s tests -p 'test_bridge_relay.py' -v
+      - name: Build primary CognitiveBridge image
+        run: docker build -f src/bridge/Dockerfile src/bridge -t cyclekernel-cognitive-bridge:test
+      - name: Build master CognitiveBridge image
+        run: docker build -f master/src/bridge/Dockerfile master/src/bridge -t cyclekernel-master-cognitive-bridge:test
