@@ -55,7 +55,15 @@ class RelayProvenanceTests(unittest.TestCase):
             normalize_relay_metrics({
                 "Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7,
                 "stress_residual": 8.01,
+                "descent_schema": "great-scale.descent/v0.4.2",
             })
+
+    def test_rejects_unversioned_or_mismatched_residual(self):
+        base = {"Core": 0.4, "U2": 0.2, "L2": 0.03, "L5": 0.7, "stress_residual": 3.5}
+        with self.assertRaisesRegex(ValueError, "requires descent_schema"):
+            normalize_relay_metrics(base)
+        with self.assertRaisesRegex(ValueError, "unsupported relay descent_schema"):
+            normalize_relay_metrics({**base, "descent_schema": "some-other-version"})
 
     def test_mapped_state_retains_source_and_companion_channel(self):
         metrics = normalize_relay_metrics({"Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65})
