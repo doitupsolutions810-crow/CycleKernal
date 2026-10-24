@@ -40,6 +40,7 @@ async def _synthetic_heartbeat():
             "L5": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
             "entropy": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
             "coupling": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
+            "telemetry_source": "synthetic",
         }
         await sync_state(metrics)
         await asyncio.sleep(1.5)
