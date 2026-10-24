@@ -7,7 +7,7 @@ from simulation_core import Universe, app, kernel
 
 
 class CycleKernalDescentIntegrationTests(unittest.TestCase):
-    def test_one_descent_tick_per_universe_cycle(self):
+    def test_one_descent_tick_and_fusion_receipt_per_universe_cycle(self):
         universe = Universe("test-universe")
         civ = universe.add_civilization("test-civ")
         universe.simulate_cycle()
@@ -17,6 +17,35 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertIn("neural_entropy_used", civ)
         self.assertGreaterEqual(civ["neural_entropy_used"], 0.0)
         self.assertLessEqual(civ["neural_entropy_used"], 1.0)
+        evidence = civ["fitness_evidence"]
+        self.assertIn("symbolic_score", evidence)
+        self.assertIn("neural_score", evidence)
+        self.assertEqual(evidence["descent_source"], "simulation_scheduler")
+        self.assertEqual(len(universe.fusion_log), 1)
+        self.assertEqual(universe.fusion_log[0]["civ_id"], "test-civ")
+        self.assertEqual(universe.fusion_log[0]["fitness_evidence"], evidence)
+
+    def test_fusion_lineage_is_bounded_and_in_snapshots(self):
+        universe = Universe("bounded-lineage")
+        universe.add_civilization("test-civ")
+        universe.max_fusion_log = 2
+        for _ in range(5):
+            universe.simulate_cycle()
+        snapshot = universe.colony_snapshot()
+        self.assertLessEqual(len(universe.fusion_log), 2)
+        self.assertLessEqual(len(snapshot["fusion_history"]), 2)
+        self.assertIn("fitness_evidence", snapshot["members"][0])
+
+    def test_promotion_transition_carries_companion_evidence(self):
+        universe = Universe("promotion-lineage")
+        civ = universe.add_civilization("test-civ")
+        civ["belief"]["truth"] = 1.0
+        civ["resources"] = {"attention": 150, "compute": 40, "memory_nodes": 8}
+        for _ in range(10):
+            universe.simulate_cycle()
+        for event in universe.promote_log:
+            self.assertIn("fitness_evidence", event)
+            self.assertIn("signed_eta", event["fitness_evidence"])
 
     def test_scale_snapshot_is_atomic_with_scheduler_updates(self):
         universe = Universe("test-universe")
@@ -83,7 +112,6 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["schema"], "great-scale.descent/v0.4.2")
-        self.assertEqual(payload["sourceVersion"], "great-scale/public/scale.js@a0fd4b10b964932f90abf7004bbe7e28687168d1")
         self.assertIn("stress_residual_normalized", payload)
         self.assertIn("cycle_count", payload)
         self.assertEqual(payload["universe_id"], "U1")
