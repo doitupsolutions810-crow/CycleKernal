@@ -367,3 +367,8 @@ For issues, questions, or contributions:
 ---
 
 **Built with ❤️ for simulation and monitoring excellence**
+
+
+## Descent C — typed missingness and source-preserving fusion
+
+[Descent C](docs/DESCENT_C_TYPED_MISSINGNESS.md) distinguishes absent symbolic inputs from explicitly empty mappings. The fusion baseline and schema stay backward-compatible for absent inputs, while explicit empty objects remain visible in source metadata and the canonical state witness.
