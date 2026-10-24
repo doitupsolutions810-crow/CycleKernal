@@ -92,7 +92,7 @@ class FitnessLineageTests(unittest.TestCase):
         self.assertFalse(evidence["promotion_decision_witness"]["already_promoted"])
         self.assertEqual(evidence["promotion_decision_witness"]["threshold"], 0.62)
         self.assertEqual(
-            fitness_state_id(evidence["promotion_decision_witness"]),
+            promotion_decision_state_id(evidence["promotion_decision_witness"]),
             evidence["promotion_decision_id"],
         )
         self.assertEqual(evidence["fusion_state_id"], civ["fusion_state_id"])
