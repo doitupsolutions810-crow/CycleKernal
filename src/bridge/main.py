@@ -39,7 +39,7 @@ current_state: CognitiveState = CognitiveState(metric_source="unavailable")
 ws_clients: list = []
 
 
-def normalize_relay_metrics(payload: Any) -> Dict[str, float]:
+def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
     """Parse a WS relay frame and validate the minimum required metric vector."""
     if isinstance(payload, bytes):
         payload = payload.decode("utf-8")
@@ -60,7 +60,7 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, float]:
         "L2": ("L2", "l2", "coupling"),
         "L5": ("L5", "l5", "entropy"),
     }
-    normalized: Dict[str, float] = {}
+    normalized: Dict[str, Any] = {}
     for canonical, names in aliases.items():
         raw = next((raw_metrics[name] for name in names if name in raw_metrics), None)
         if raw is None:
@@ -76,6 +76,27 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, float]:
     # Keep legacy names consumed by the trait mapper and NS fusion synchronized.
     normalized["entropy"] = normalized["L5"]
     normalized["coupling"] = normalized["L2"]
+
+    # Optional companion fields remain distinct from LoopMem mood metrics. They
+    # are never synthesized from Core/L2/L5; the Great Scale adapter validates
+    # the configured [0, 7] scheduler residual domain separately.
+    if "stress_residual" in raw_metrics:
+        try:
+            residual = float(raw_metrics["stress_residual"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("relay stress_residual must be numeric") from exc
+        if not math.isfinite(residual) or not 0.0 <= residual <= 7.0:
+            raise ValueError("relay stress_residual must be finite and in [0, 7]")
+        normalized["stress_residual"] = residual
+    for field in ("belief", "resources"):
+        if field in raw_metrics:
+            if not isinstance(raw_metrics[field], Mapping):
+                raise ValueError(f"relay {field} must be a JSON object")
+            normalized[field] = dict(raw_metrics[field])
+    if "descent_schema" in raw_metrics:
+        if not isinstance(raw_metrics["descent_schema"], str):
+            raise ValueError("relay descent_schema must be a string")
+        normalized["descent_schema"] = raw_metrics["descent_schema"]
     return normalized
 
 
