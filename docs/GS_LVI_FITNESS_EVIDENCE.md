@@ -94,3 +94,8 @@ The companion evidence now carries the canonical state witness used to produce `
 ## Descent C — typed missingness
 
 The fusion contract now distinguishes an absent symbolic mapping (None, which uses the documented baseline) from an explicitly supplied empty object ({}, which is preserved as provided input). This prevents false source labels and keeps the recorded inputs consistent with the computed score and canonical witness across the backend and both bridge copies. See [Descent C — Typed missingness](DESCENT_C_TYPED_MISSINGNESS.md).
+
+
+## Descent CI — field-presence closure
+
+The canonical witness now includes mapping-level presence plus recognized-field presence, and preserves the validated belief.deception value even though the current score does not use it. This distinguishes equal-score inputs with different supplied data. See [Descent CI](DESCENT_CI_WITNESS_COMPLETENESS.md). This enriches the evidence record only; the fitness formula and promotion thresholds are unchanged.
