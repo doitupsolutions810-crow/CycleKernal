@@ -39,9 +39,42 @@ def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
+def validate_symbolic_inputs(
+    belief: Optional[Mapping[str, Any]] = None,
+    resources: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """Reject invalid symbolic inputs instead of silently clipping them into a score."""
+    if belief is not None:
+        if not isinstance(belief, Mapping):
+            raise ValueError("belief must be a mapping")
+        for field in ("truth", "deception"):
+            if field not in belief:
+                continue
+            try:
+                value = float(belief[field])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"belief.{field} must be numeric") from exc
+            if not isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"belief.{field} must be finite and in [0, 1]")
+
+    if resources is not None:
+        if not isinstance(resources, Mapping):
+            raise ValueError("resources must be a mapping")
+        for field in ("attention", "compute", "memory_nodes"):
+            if field not in resources:
+                continue
+            try:
+                value = float(resources[field])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"resources.{field} must be numeric") from exc
+            if not isfinite(value) or value < 0.0:
+                raise ValueError(f"resources.{field} must be finite and nonnegative")
+
+
 def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> float:
     """Constraint side: truth alignment plus resource viability."""
-    truth = _clip(float(belief.get("truth", 0.5)))
+    validate_symbolic_inputs(belief, resources)
+    truth = float(belief.get("truth", 0.5))
     attention = float(resources.get("attention", 0.0))
     compute = float(resources.get("compute", 0.0))
     memory_nodes = float(resources.get("memory_nodes", 0.0))
@@ -327,6 +360,8 @@ def apply_fusion(
     state_id = fitness_state_id(identity_state)
     derived_genome_id = fitness_state_genome_id(identity_state)
     evidence["fusion_state_id"] = state_id
+    # Retain the exact canonical payload so consumers can independently recompute the digest.
+    evidence["fusion_state_witness"] = identity_state
     return {
         "ns_fitness": round(fit, 4),
         "mood_dot": round(fused, 4),
