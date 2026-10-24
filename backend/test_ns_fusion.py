@@ -7,6 +7,7 @@ from ns_fusion import (
     apply_fusion,
     build_fusion_identity_state,
     fitness_state_id,
+    promotion_decision_state_id,
     fitness_channels,
     fuse_mood,
     neural_score,
@@ -198,7 +199,7 @@ class FusionStressTests(unittest.TestCase):
         ):
             evidence = result["fitness_evidence"]
             witness = evidence["promotion_decision_witness"]
-            self.assertEqual(fitness_state_id(witness), evidence["promotion_decision_id"])
+            self.assertEqual(promotion_decision_state_id(witness), evidence["promotion_decision_id"])
             self.assertEqual(evidence["promotion_decision_id"], result["promotion_decision_id"])
             self.assertEqual(witness["fusion_state_id"], result["fusion_state_id"])
             self.assertEqual(witness["already_promoted"], expected_prior)
@@ -430,7 +431,7 @@ class FusionStressTests(unittest.TestCase):
                         promoted["promotion_decision_id"],
                     )
                     self.assertEqual(
-                        module.fitness_state_id(
+                        module.promotion_decision_state_id(
                             promoted["fitness_evidence"]["promotion_decision_witness"]
                         ),
                         promoted["promotion_decision_id"],
