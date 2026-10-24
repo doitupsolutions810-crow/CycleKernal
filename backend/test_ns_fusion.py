@@ -412,6 +412,29 @@ class FusionStressTests(unittest.TestCase):
                         ),
                         empty["fusion_state_id"],
                     )
+
+                    # The same fusion state may produce different policy contexts.
+                    not_promoted = module.apply_fusion("neutral", {
+                        "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                    })
+                    promoted = module.apply_fusion("neutral", {
+                        "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                    }, colony={"promoted": True})
+                    self.assertEqual(
+                        not_promoted["fusion_state_id"], promoted["fusion_state_id"]
+                    )
+                    self.assertEqual(not_promoted["promote"]["threshold"], 0.62)
+                    self.assertEqual(promoted["promote"]["threshold"], 0.28)
+                    self.assertNotEqual(
+                        not_promoted["promotion_decision_id"],
+                        promoted["promotion_decision_id"],
+                    )
+                    self.assertEqual(
+                        module.fitness_state_id(
+                            promoted["fitness_evidence"]["promotion_decision_witness"]
+                        ),
+                        promoted["promotion_decision_id"],
+                    )
                 finally:
                     sys.path.pop(0)
 
