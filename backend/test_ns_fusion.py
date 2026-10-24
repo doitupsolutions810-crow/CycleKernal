@@ -384,6 +384,35 @@ class FusionStressTests(unittest.TestCase):
                 finally:
                     sys.path.pop(0)
 
+    def test_explicit_null_mappings_are_rejected_by_all_fusion_copies(self):
+        root = Path(__file__).resolve().parents[1]
+        copies = (
+            ("backend", root / "backend" / "ns_fusion.py", root / "backend"),
+            ("bridge", root / "src" / "bridge" / "ns_fusion.py", root / "src" / "bridge"),
+            ("master_bridge", root / "master" / "src" / "bridge" / "ns_fusion.py", root / "master" / "src" / "bridge"),
+        )
+        for name, module_path, import_path in copies:
+            with self.subTest(copy=name):
+                sys.path.insert(0, str(import_path))
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        "cyclekernel_null_closure_" + name, module_path
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    baseline = {"Core": 0.5, "L5": 0.2, "L2": 0.1}
+                    # Omitted keys are absent and continue to use documented defaults.
+                    self.assertEqual(
+                        module.apply_fusion("neutral", baseline)["fitness_evidence"]["belief_source"],
+                        "default",
+                    )
+                    for field in ("belief", "resources"):
+                        with self.subTest(copy=name, field=field):
+                            with self.assertRaisesRegex(ValueError, rf"{field} must be a mapping"):
+                                module.apply_fusion("neutral", {**baseline, field: None})
+                finally:
+                    sys.path.pop(0)
+
     def test_nonfinite_score_input_fails_closed(self):
         with self.assertRaises(ValueError):
             neural_score(float("nan"), 0.2, 0.1)
