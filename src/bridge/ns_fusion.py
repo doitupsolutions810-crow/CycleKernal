@@ -33,8 +33,15 @@ MOOD_SCORE = {
 }
 
 
+def _json_number(value: Any, label: str) -> float:
+    """Accept actual JSON number types, never booleans or coercible strings."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a JSON number")
+    return float(value)
+
+
 def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    value = float(value)
+    value = _json_number(value, "fusion values")
     if not isfinite(value):
         raise ValueError("fusion values must be finite")
     return max(lo, min(hi, value))
@@ -56,7 +63,7 @@ def validate_symbolic_inputs(
             # coercible strings must not bypass typed-input validation.
             if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
                 raise ValueError(f"belief.{field} must be a JSON number")
-            value = float(raw_value)
+            value = _json_number(raw_value, f"belief.{field}")
             if not isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"belief.{field} must be finite and in [0, 1]")
 
@@ -69,7 +76,7 @@ def validate_symbolic_inputs(
             raw_value = resources[field]
             if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
                 raise ValueError(f"resources.{field} must be a JSON number")
-            value = float(raw_value)
+            value = _json_number(raw_value, f"resources.{field}")
             if not isfinite(value) or value < 0.0:
                 raise ValueError(f"resources.{field} must be finite and nonnegative")
 
@@ -104,6 +111,9 @@ def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> f
 
 def neural_score(core: float, entropy: float, coupling: float) -> float:
     """Neural / LoopMem side. High entropy is exploratory, not automatically fit."""
+    core = _json_number(core, "core")
+    entropy = _json_number(entropy, "entropy")
+    coupling = _json_number(coupling, "coupling")
     stability = 1.0 - _clip(entropy)
     bind = _clip(coupling / 0.2)
     return _clip(0.5 * _clip(core) + 0.3 * stability + 0.2 * bind)
@@ -447,10 +457,10 @@ def apply_fusion(
     colony: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Apply Great Scale stress then return legacy outputs plus explicit evidence."""
-    core = float(metrics.get("Core", metrics.get("core", 0.5)))
-    base_entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
-    coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
-    residual = float(metrics.get("stress_residual", 0.0))
+    core = _json_number(metrics.get("Core", metrics.get("core", 0.5)), "Core")
+    base_entropy = _json_number(metrics.get("L5", metrics.get("entropy", 0.0)), "L5")
+    coupling = _json_number(metrics.get("L2", metrics.get("coupling", 0.0)), "L2")
+    residual = _json_number(metrics.get("stress_residual", 0.0), "stress_residual")
     descent_source = "provided" if "stress_residual" in metrics else "default_zero"
     metric_source = str(metrics.get("_metric_source", "unknown"))
     residual_normalized = normalized_stress_residual(residual)
