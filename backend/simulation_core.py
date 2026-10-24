@@ -102,6 +102,7 @@ class Universe:
             "dormant": len(dormant),
             "genome_id": genome,
             "mood_dot": round(mood_dot, 4),
+            "cycle_count": self.cycle_count,
             "members": [
                 {
                     "id": c["id"],
