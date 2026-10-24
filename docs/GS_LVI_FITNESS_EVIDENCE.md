@@ -122,3 +122,8 @@ Nested symbolic inputs and top-level `Core`/`L5`/`L2`/`stress_residual` now reje
 
 
 The relay parser is part of the same typed-input boundary: both `src/bridge/main.py` and `master/src/bridge/main.py` now validate raw JSON metric types with the shared `_json_number` helper before normalization. This closes the path where a boolean/string was converted to a float before fusion's strict guard. See [Descent CVI](DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md).
+
+
+## System 30 — validation frontier (Descent CVII)
+
+The relay parser must admit raw types before converting them to floating-point values. Because `float(True)` equals `1.0` and `float("0.5")` equals `0.5`, post-normalization validation cannot distinguish malformed booleans/strings from valid numbers. Both bridge implementations now apply the shared validator before normalization. See [Descent CVII](DESCENT_CVII_VALIDATION_FRONTIER.md).
