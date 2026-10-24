@@ -88,9 +88,9 @@ class Universe:
         return self.civilizations[civ_id]
 
     def colony_snapshot(self):
-        """Return one internally consistent civilization/lineage snapshot."""
+        """Return one internally consistent, detached civilization/lineage snapshot."""
         with self._descent_state_lock:
-            return self._colony_snapshot_locked()
+            return deepcopy(self._colony_snapshot_locked())
 
     def _colony_snapshot_locked(self):
         civs = list(self.civilizations.values())
@@ -261,61 +261,73 @@ class Universe:
                 "civilizations": deepcopy(self.civilizations),
                 "factions": deepcopy(self.factions),
                 "cycle_count": self.cycle_count,
-                "colony": self._colony_snapshot_locked(),
+                "colony": deepcopy(self._colony_snapshot_locked()),
                 "descent": self.descent_engine.snapshot(running=running),
             }
 
 class CycleKernel:
     def __init__(self):
         self.universes = {}
+        self._universe_lock = RLock()
         self.audit_logs = []
         self.running = False
 
     def create_universe(self, universe_id):
-        if universe_id not in self.universes:
-            self.universes[universe_id] = Universe(universe_id)
-            logger.info(f"Created universe {universe_id}")
-        return self.universes[universe_id]
+        with self._universe_lock:
+            if universe_id not in self.universes:
+                self.universes[universe_id] = Universe(universe_id)
+                logger.info(f"Created universe {universe_id}")
+            return self.universes[universe_id]
 
     def run_simulation(self, cycles=1):
         start_time = time.time()
+        with self._universe_lock:
+            universes = list(self.universes.values())
         for _ in range(cycles):
-            for universe in self.universes.values():
+            for universe in universes:
                 universe.simulate_cycle()
             simulation_cycles.inc()
         duration = time.time() - start_time
         simulation_duration.observe(duration)
-        total_civs = sum(len(u.civilizations) for u in self.universes.values())
-        total_att = sum(sum(c["resources"]["attention"] for c in u.civilizations.values()) for u in self.universes.values())
-        total_comp = sum(sum(c["resources"]["compute"] for c in u.civilizations.values()) for u in self.universes.values())
-        promoted = sum(1 for u in self.universes.values() for c in u.civilizations.values() if c.get("promoted"))
+        snapshots = [universe.state_snapshot() for universe in universes]
+        civs = [civ for snapshot in snapshots for civ in snapshot["civilizations"].values()]
+        total_civs = len(civs)
+        total_att = sum(civ["resources"]["attention"] for civ in civs)
+        total_comp = sum(civ["resources"]["compute"] for civ in civs)
+        promoted = sum(1 for civ in civs if civ.get("promoted"))
         active_civilizations.set(total_civs)
         total_attention.set(total_att)
         total_compute.set(total_comp)
         promoted_colonists.set(promoted)
         logger.info(f"Ran {cycles} simulation cycles in {duration:.3f}s")
 
-    def colony(self):
-        snapshots = {uid: u.colony_snapshot() for uid, u in self.universes.items()}
+    @staticmethod
+    def _aggregate_colony_snapshots(snapshots):
         primary = snapshots.get("U1") or next(iter(snapshots.values()), {})
-        return {"universes": snapshots, **{k: primary.get(k) for k in ("active", "promoted", "held", "dormant", "genome_id", "mood_dot")}}
+        return {
+            "universes": snapshots,
+            **{key: primary.get(key) for key in ("active", "promoted", "held", "dormant", "genome_id", "mood_dot")},
+        }
+
+    def colony(self):
+        with self._universe_lock:
+            universes = dict(self.universes)
+        snapshots = {uid: universe.colony_snapshot() for uid, universe in universes.items()}
+        return self._aggregate_colony_snapshots(snapshots)
 
     def get_state(self):
+        with self._universe_lock:
+            universes = dict(self.universes)
+        universe_states = {
+            uid: universe.state_snapshot(running=self.running)
+            for uid, universe in universes.items()
+        }
+        colony_snapshots = {uid: state["colony"] for uid, state in universe_states.items()}
         return {
-            "universes": {
-                uid: {
-                    "id": u.id,
-                    "civilizations": u.civilizations,
-                    "factions": u.factions,
-                    "cycle_count": u.cycle_count,
-                    "colony": u.colony_snapshot(),
-                    "descent": u.descent_snapshot(running=self.running),
-                }
-                for uid, u in self.universes.items()
-            },
-            "total_civilizations": sum(len(u.civilizations) for u in self.universes.values()),
-            "colony": self.colony(),
-            "audit_logs": self.audit_logs[-100:],
+            "universes": universe_states,
+            "total_civilizations": sum(len(state["civilizations"]) for state in universe_states.values()),
+            "colony": self._aggregate_colony_snapshots(colony_snapshots),
+            "audit_logs": deepcopy(self.audit_logs[-100:]),
         }
 
 
