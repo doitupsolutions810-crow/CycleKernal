@@ -229,10 +229,6 @@ def apply_fusion(
     colony = dict(colony or {})
     decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0)))
     label = state_mood
-    if fused >= CONVERGENT_LABEL_THRESHOLD and state_mood == "neutral":
-        label = "convergent"
-    elif fused < SURVIVAL_LABEL_THRESHOLD and state_mood != "survival":
-        label = "survival"
     label_projection_threshold = None
     if fused >= CONVERGENT_LABEL_THRESHOLD and state_mood == "neutral":
         label = "convergent"
@@ -286,6 +282,7 @@ def apply_fusion(
         "beta": BETA,
         "promote": decision,
         "genome_id": colony.get("genome_id") or state_id,
+        "fusion_state_id": state_id,
         "genome_state_schema": FUSION_STATE_ID_SCHEMA,
         "fitness_evidence": evidence,
         "stress_residual": residual,
