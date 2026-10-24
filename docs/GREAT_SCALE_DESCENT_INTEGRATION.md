@@ -32,3 +32,14 @@ No unauthenticated \`/step\` endpoint is added: CycleKernal's simulation schedul
 The unit and integration tests cover modular involution identity on 37 points, residual halving, convergence, bounded history, normalization scope, fusion receipt fields, one tick per universe cycle, endpoint authentication, and snapshot schema. The GitHub Actions run is the authoritative hosted execution record. Until it completes successfully, the code is a proposed branch integration, not a verified deployment.
 
 This adapter is software integration evidence only; it is not evidence for a new physical law of quantum geometry.
+
+
+## LVI extension — dual-channel fitness evidence
+
+The legacy `ns_fitness = sqrt(symbolic_score * neural_score)` remains unchanged, but it does not identify the symbolic/neural pair uniquely. The LVI branch now records both channel values, `signed_eta = symbolic - neural`, the ratio when finite and defined, and the threshold distances/margins for promote, demote, and mood labels. The same evidence accompanies each fusion event and each promotion/demotion event, in a bounded 500-event per-universe history.
+
+The CognitiveBridge variants also consume `RELAY_URL` as a real WebSocket source when configured. They validate the required normalized metric vector and tag every state with `metric_source`. Live relay failure is visible as stale/degraded; synthetic data is not injected behind a configured live relay. Synthetic mode remains explicitly labelled when no relay URL is configured and `ALLOW_SYNTHETIC_RELAY` permits it.
+
+Great Scale residuals forwarded through the relay require the exact `great-scale.descent/v0.4.2` schema and the configured [0,7] residual domain. A relay carrying only LoopMem mood metrics does not acquire a fabricated Great Scale residual; its evidence marks `descent_source=default_zero`. Simulation scheduler events mark the residual as `simulation_scheduler`.
+
+The companion-channel and source-provenance changes are covered in the stacked PR and workflow, but deployment claims require successful hosted tests and an actual configured live-relay smoke run. No empirical/physical law is claimed.
