@@ -18,6 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from websockets import connect
 from traits import map_metrics_to_traits, CognitiveState
+from ns_fusion import validate_symbolic_inputs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cognitive-bridge")
@@ -105,6 +106,7 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
         if raw_metrics["descent_schema"] != EXPECTED_DESCENT_SCHEMA:
             raise ValueError(f"unsupported relay descent_schema: {raw_metrics['descent_schema']}")
         normalized["descent_schema"] = raw_metrics["descent_schema"]
+    validate_symbolic_inputs(normalized.get("belief"), normalized.get("resources"))
     return normalized
 
 
