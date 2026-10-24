@@ -29,6 +29,14 @@ class CognitiveState:
     genome_id: str = ""
     colony: Dict = field(default_factory=dict)
     promote: Dict = field(default_factory=dict)
+    symbolic_score: float = 0.0
+    neural_score: float = 0.0
+    channel_delta: float = 0.0
+    channel_gap: float = 0.0
+    threshold_distances: Dict = field(default_factory=dict)
+    mood_threshold_distances: Dict = field(default_factory=dict)
+    fusion_evidence: Dict = field(default_factory=dict)
+    channel_provenance: Dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)
@@ -92,6 +100,14 @@ def map_metrics_to_traits(metrics: Dict, colony: Dict = None) -> CognitiveState:
     state.genome_id = fused["genome_id"]
     state.colony = fused["colony"]
     state.promote = fused["promote"]
+    state.symbolic_score = fused["symbolic_score"]
+    state.neural_score = fused["neural_score"]
+    state.channel_delta = fused["channel_delta"]
+    state.channel_gap = fused["channel_gap"]
+    state.threshold_distances = fused["threshold_distances"]
+    state.mood_threshold_distances = fused["mood_threshold_distances"]
+    state.fusion_evidence = fused["fusion_evidence"]
+    state.channel_provenance = fused["channel_provenance"]
     state.explanation += f" NS fitness {state.ns_fitness:.2f} fused into mood_dot {state.mood_dot:.2f} ({fused['promote']['action']})."
     if fused["promote"]["action"] == "promote":
         traits.append("Colony-Promote")
