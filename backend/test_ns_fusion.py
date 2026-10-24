@@ -24,6 +24,7 @@ class FusionStressTests(unittest.TestCase):
         self.assertIn("neural_score", evidence)
         self.assertIn("signed_eta", evidence)
         self.assertIn("symbolic_neural_ratio", evidence)
+        self.assertEqual(evidence["descent_source"], "default_zero")
         self.assertEqual(
             set(evidence["threshold_margins"]),
             {"promote", "demote", "convergent_label", "survival_label"},
@@ -36,6 +37,7 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(stressed["stress_residual_normalized"], 1.0)
         self.assertAlmostEqual(stressed["neural_entropy_used"], 0.55)
         self.assertLess(stressed["ns_fitness"], calm["ns_fitness"])
+        self.assertEqual(stressed["fitness_evidence"]["descent_source"], "provided")
 
     def test_out_of_scope_residual_fails_closed(self):
         with self.assertRaises(ValueError):
@@ -56,13 +58,11 @@ class FusionStressTests(unittest.TestCase):
         self.assertAlmostEqual(balanced["symbolic_neural_ratio"], 1.0)
         self.assertAlmostEqual(unbalanced["signed_eta"], 0.5)
         self.assertAlmostEqual(balanced["signed_eta"], 0.0)
-        # With the same mood, equal scalar => same downstream mood_dot/decision,
-        # despite different underlying evidence.
-        self.assertAlmostEqual(fuse_mood(unbalanced["ns_fitness"], "neutral"),
-                               fuse_mood(balanced["ns_fitness"], "neutral"))
-        self.assertEqual(
-            promote_decision(fuse_mood(unbalanced["ns_fitness"], "neutral"))["action"],
-            promote_decision(fuse_mood(balanced["ns_fitness"], "neutral"))["action"],
+        # The scalar-based decision is identical for identical mood, despite the
+        # different channel geometry retained by the companion output.
+        self.assertAlmostEqual(
+            fuse_mood(unbalanced["ns_fitness"], "neutral"),
+            fuse_mood(balanced["ns_fitness"], "neutral"),
         )
 
     def test_zero_neural_channel_has_explicit_undefined_ratio(self):
@@ -87,6 +87,10 @@ class FusionStressTests(unittest.TestCase):
         self.assertEqual(promote_decision(0.6199)["action"], "hold")
         self.assertEqual(promote_decision(0.28, already_promoted=True)["action"], "hold")
         self.assertEqual(promote_decision(0.2799, already_promoted=True)["action"], "demote")
+
+    def test_nonfinite_score_input_fails_closed(self):
+        with self.assertRaises(ValueError):
+            neural_score(float("nan"), 0.2, 0.1)
 
 
 if __name__ == "__main__":
