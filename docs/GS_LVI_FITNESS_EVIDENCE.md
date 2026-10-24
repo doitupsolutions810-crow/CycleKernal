@@ -104,3 +104,8 @@ The canonical witness now includes mapping-level presence plus recognized-field 
 ## Descent CII — explicit-null closure
 
 The core fusion entry point now distinguishes an omitted mapping key from a present key whose value is `None`/JSON `null`. Omitted keys keep the baseline; supplied mappings are validated and preserved; explicit null/non-mapping values are rejected rather than silently treated as absent. This closes the last non-injective fallback identified after Descent C and CI. See [Descent CII](DESCENT_CII_EXPLICIT_NULL_CLOSURE.md). Scoring and promotion thresholds are unchanged.
+
+
+## Descent CIII — evidence/identity concordance
+
+A common `build_fusion_receipt` constructor now creates the evidence projection and canonical witness together. It is used by both bridge/backend fusion and the simulation scheduler; the scheduler passes the same live belief/resources and neural context it scored, and the returned evidence includes the exact witness used to compute its digest. This addresses a source-level mismatch in which scheduler evidence could display defaults and false field-presence flags despite a fingerprint built from live inputs. See [Descent CIII](DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md). Scoring and policy thresholds remain unchanged; full hosted tests/builds are still pending actual runner execution.
