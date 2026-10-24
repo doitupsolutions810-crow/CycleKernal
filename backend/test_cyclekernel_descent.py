@@ -41,11 +41,14 @@ class CycleKernalDescentIntegrationTests(unittest.TestCase):
         civ = universe.add_civilization("test-civ")
         civ["belief"]["truth"] = 1.0
         civ["resources"] = {"attention": 150, "compute": 40, "memory_nodes": 8}
-        for _ in range(10):
-            universe.simulate_cycle()
-        for event in universe.promote_log:
-            self.assertIn("fitness_evidence", event)
-            self.assertIn("signed_eta", event["fitness_evidence"])
+        universe.simulate_cycle()
+        promoted_events = [event for event in universe.promote_log if event["action"] == "promote"]
+        self.assertEqual(len(promoted_events), 1, "high-evidence fixture should promote on the first cycle")
+        evidence = promoted_events[0]["fitness_evidence"]
+        self.assertEqual(evidence, civ["fitness_evidence"])
+        self.assertEqual(evidence["descent_source"], "simulation_scheduler")
+        self.assertIn("signed_eta", evidence)
+        self.assertIn("threshold_margins", evidence)
 
     def test_scale_snapshot_is_atomic_with_scheduler_updates(self):
         universe = Universe("test-universe")
