@@ -21,12 +21,27 @@ class FitnessLineageTests(unittest.TestCase):
 
     def test_lineage_history_is_bounded(self):
         universe = Universe("bounded-lineage")
-        universe.add_civilization("test-civ")
+        civ = universe.add_civilization("test-civ")
         universe.max_fusion_log = 2
-        for _ in range(5):
+        universe.max_promotion_log = 2
+        for cycle in range(6):
+            if cycle % 2 == 0:
+                civ["belief"]["truth"] = 1.0
+                civ["resources"] = {"attention": 150, "compute": 40, "memory_nodes": 8}
+                civ["promoted"] = False
+                civ["state"] = "active"
+            else:
+                civ["belief"]["truth"] = 0.0
+                civ["resources"] = {"attention": 0, "compute": 0, "memory_nodes": 0}
+                civ["promoted"] = True
+                civ["state"] = "promoted"
             universe.simulate_cycle()
+        snapshot = universe.colony_snapshot()
         self.assertLessEqual(len(universe.fusion_log), 2)
-        self.assertLessEqual(len(universe.colony_snapshot()["fusion_history"]), 2)
+        self.assertLessEqual(len(universe.promote_log), 2)
+        self.assertLessEqual(len(snapshot["fusion_history"]), 2)
+        self.assertLessEqual(len(snapshot["promotion_history"]), 2)
+        self.assertEqual(len(universe.promote_log), 2)
 
     def test_promotion_transition_carries_same_evidence(self):
         universe = Universe("promotion-lineage")
