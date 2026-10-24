@@ -8,6 +8,7 @@ sys.path.insert(0, str(BRIDGE))
 
 from main import normalize_relay_metrics
 from traits import map_metrics_to_traits
+from ns_fusion import fitness_state_id
 
 
 class RelayProvenanceTests(unittest.TestCase):
@@ -86,6 +87,7 @@ class RelayProvenanceTests(unittest.TestCase):
         self.assertEqual(payload["metric_source"], "relay")
         self.assertTrue(payload["fusion_state_id"])
         self.assertEqual(payload["fitness_evidence"]["fusion_state_id"], payload["fusion_state_id"])
+        self.assertEqual(fitness_state_id(payload["fitness_evidence"]["fusion_state_witness"]), payload["fusion_state_id"])
         self.assertIn("symbolic_score", payload["fitness_evidence"])
         self.assertIn("neural_score", payload["fitness_evidence"])
         self.assertIn("signed_eta", payload["fitness_evidence"])
