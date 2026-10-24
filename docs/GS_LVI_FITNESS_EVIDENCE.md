@@ -84,3 +84,8 @@ The branch workflow is configured to run:
 5. Docker builds for both CognitiveBridge variants.
 
 Focused local tests run on isolated copies of the descent and fusion modules passed **21/21** in the analysis environment. That is not a full CycleKernel integration run. The latest hosted Actions jobs still report failure with no runner assigned and empty step lists, so hosted CI and the Docker builds remain unverified. A live relay smoke test is also still required before operational promotion.
+
+
+## Descent XCIX — validity and independently checkable witness
+
+The companion evidence now carries the canonical state witness used to produce `fusion_state_id`. Consumers can recompute the SHA-256 fingerprint from the witness, while recognizing that digest consistency is not source authentication. Belief truth/deception must be finite and in [0,1], and resource counts finite and nonnegative; invalid values fail closed both at relay ingress and in the score function. See [Descent XCIX](DESCENT_XCIX_VALIDITY_WITNESS_CLOSURE.md).
