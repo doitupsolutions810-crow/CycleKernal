@@ -395,3 +395,8 @@ For issues, questions, or contributions:
 ## Descent CV — execution-evidence closure
 
 [Descent CV](docs/DESCENT_CV_EXECUTION_EVIDENCE_CLOSURE.md) distinguishes code/test failures from jobs that never ran. The current Actions failures have `runner_id=0` and no executed steps. The adjacent `swarm-vm-runner` docs explain the runner-label mismatch, but public `pull_request` jobs should not be moved blindly onto a Docker-socket-enabled self-hosted runner before registration scope and trust controls are in place.
+
+
+## Descent CVI — typed numerical admission
+
+[Descent CVI](docs/DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md) closes a Python type-coercion hole: booleans and numeric strings previously passed `float(...)` and could become score-bearing inputs. The common `_json_number` guard rejects those values across belief/resources and neural/top-level fusion metrics before range checks, with regression coverage across all three fusion copies. Valid numeric inputs and scoring thresholds are unchanged.
