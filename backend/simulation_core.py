@@ -185,6 +185,11 @@ class Universe:
                 mood_output=label,
                 label_projection_threshold=label_projection_threshold,
                 metric_source="simulation_scheduler",
+                core=float(civ["belief"]["truth"]),
+                base_entropy=base_entropy,
+                coupling=0.08 if mood == "convergent" else 0.02,
+                belief=civ["belief"],
+                resources=civ["resources"],
             )
             identity_state = build_fusion_identity_state(
                 mood_input=mood,
