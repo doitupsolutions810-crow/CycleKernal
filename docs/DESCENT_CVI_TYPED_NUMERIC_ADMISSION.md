@@ -59,3 +59,8 @@ Source inspection confirms the helper and checks exist in all three fusion copie
 ## Relay-ingress closure
 
 The first strict-type guard still had a normalization bypass: `normalize_relay_metrics()` converted `Core`, `U2`, `L2`, `L5`, and the optional `stress_residual` to floats before fusion received them. A boolean or numeric string could therefore lose its original type at the bridge boundary. Both primary and master relay parsers now call the shared `_json_number` guard on the raw field before conversion and distinguish an omitted required metric from an explicitly supplied null. Regressions cover both parser copies, booleans, numeric strings, and oversized integers.
+
+
+## Follow-on: validation frontier (Descent CVII)
+
+The original numeric type guard also had to be placed before relay normalization; otherwise `true` and `"0.5"` had already become floats when fusion saw them. Both bridge parsers now validate raw values using the shared helper. Descent CVII formalizes the non-injective-normalization invariant and maps it to Great Scale System 30. See [Descent CVII](DESCENT_CVII_VALIDATION_FRONTIER.md).
