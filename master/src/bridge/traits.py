@@ -88,7 +88,9 @@ def map_metrics_to_traits(metrics: Dict, colony: Dict = None, metric_source: str
         state.mood = "neutral"
         state.explanation = "LoopMem within nominal bounds. Standard cognitive profile."
 
-    fused = apply_fusion(state.mood, metrics, colony)
+    fusion_metrics = dict(metrics)
+    fusion_metrics["_metric_source"] = metric_source
+    fused = apply_fusion(state.mood, fusion_metrics, colony)
     state.ns_fitness = fused["ns_fitness"]
     state.mood_dot = fused["mood_dot"]
     state.mood = fused["mood"]
