@@ -390,3 +390,8 @@ For issues, questions, or contributions:
 ## Descent CIV — promotion-context closure
 
 [Descent CIV](docs/DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md) corrects the active hysteresis threshold reported by a hold decision and gives the policy decision its own `pd-` content fingerprint, separate from the `fs-` fusion-state identity. The witness binds prior promotion state, action, fused score, and active threshold into lineage and bridge evidence.
+
+
+## Descent CV — execution-evidence closure
+
+[Descent CV](docs/DESCENT_CV_EXECUTION_EVIDENCE_CLOSURE.md) distinguishes code/test failures from jobs that never ran. The current Actions failures have `runner_id=0` and no executed steps. The adjacent `swarm-vm-runner` docs explain the runner-label mismatch, but public `pull_request` jobs should not be moved blindly onto a Docker-socket-enabled self-hosted runner before registration scope and trust controls are in place.
