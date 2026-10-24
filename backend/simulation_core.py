@@ -341,50 +341,60 @@ class ChatMemoryBridge:
         u1 = self.universes.get("U1")
         if not u1:
             u1 = self.kernel.create_universe("U1")
-        civ_id = self.chat_to_civ_map.get(user_id)
-        if not civ_id or civ_id not in u1.civilizations:
-            civ_id = f"user_{user_id[:6]}"
-            u1.add_civilization(civ_id)
-            self.chat_to_civ_map[user_id] = civ_id
-        civ = u1.civilizations[civ_id]
-        civ["resources"]["attention"] = min(150, civ["resources"]["attention"] + 10)
-        civ["resources"]["compute"] += 5
-        message_impact = len(message) / 1000
-        civ["belief"]["truth"] = float(np.clip(civ["belief"]["truth"] + message_impact, 0, 1))
-        civ["belief"]["deception"] = 1 - civ["belief"]["truth"]
-        event = {
-            "type": "chat_interaction",
-            "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
-            "impact": {"civ_id": civ_id, "attention_delta": 10, "compute_delta": 5, "genome_id": civ.get("genome_id")},
-        }
+        with u1._descent_state_lock:
+            civ_id = self.chat_to_civ_map.get(user_id)
+            if not civ_id or civ_id not in u1.civilizations:
+                civ_id = f"user_{user_id[:6]}"
+                u1.add_civilization(civ_id)
+                self.chat_to_civ_map[user_id] = civ_id
+            civ = u1.civilizations[civ_id]
+            civ["resources"]["attention"] = min(150, civ["resources"]["attention"] + 10)
+            civ["resources"]["compute"] += 5
+            message_impact = len(message) / 1000
+            civ["belief"]["truth"] = float(np.clip(civ["belief"]["truth"] + message_impact, 0, 1))
+            civ["belief"]["deception"] = 1 - civ["belief"]["truth"]
+            event = {
+                "type": "chat_interaction",
+                "user_id": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "impact": {"civ_id": civ_id, "attention_delta": 10, "compute_delta": 5, "genome_id": civ.get("genome_id")},
+            }
+            civ_snapshot = deepcopy(civ)
         self.kernel.audit_logs.append(event)
         chat_interactions.inc()
-        socketio.emit("event", {"message": f"Memory updated for {civ_id} genome {civ.get('genome_id')}", "civ_state": civ})
+        socketio.emit("event", {"message": f"Memory updated for {civ_id} genome {civ_snapshot.get('genome_id')}", "civ_state": civ_snapshot})
         logger.info(f"Processed interaction for user {user_id} -> civ {civ_id}")
         return civ_id
 
     def get_context_from_memory(self, user_id):
-        civ_id = self.chat_to_civ_map.get(user_id)
-        if not civ_id:
+        if not self.chat_to_civ_map.get(user_id):
             return {"status": "new_user", "message": "New user, no prior memory."}
         u1 = self.universes.get("U1")
         if not u1:
             return {"status": "no_universe", "message": "Universe not initialized."}
-        civ = u1.civilizations.get(civ_id)
-        if not civ:
-            return {"status": "no_civ", "message": "Civilization not found."}
-        related_myths = [m for m in u1.myths.values() if m.get("faction") == civ["faction"]]
+        with u1._descent_state_lock:
+            civ_id = self.chat_to_civ_map.get(user_id)
+            if not civ_id:
+                return {"status": "new_user", "message": "New user, no prior memory."}
+            civ = u1.civilizations.get(civ_id)
+            if not civ:
+                return {"status": "no_civ", "message": "Civilization not found."}
+            user_state = deepcopy(civ)
+            related_myths = deepcopy([
+                myth for myth in u1.myths.values()
+                if myth.get("faction") == civ["faction"]
+            ])
+            universe_vibe = {
+                "total_civs": len(u1.civilizations),
+                "active_factions": deepcopy(u1.factions),
+                "cycle_count": u1.cycle_count,
+                "colony": deepcopy(u1._colony_snapshot_locked()),
+            }
         return {
             "status": "success",
-            "user_state": civ,
+            "user_state": user_state,
             "crystallized_memories": related_myths,
-            "universe_vibe": {
-                "total_civs": len(u1.civilizations),
-                "active_factions": u1.factions,
-                "cycle_count": u1.cycle_count,
-                "colony": u1.colony_snapshot(),
-            },
+            "universe_vibe": universe_vibe,
         }
 
 
