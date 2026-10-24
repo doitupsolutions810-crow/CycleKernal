@@ -385,3 +385,8 @@ For issues, questions, or contributions:
 ## Descent CIII — evidence/identity concordance
 
 [Descent CIII](docs/DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md) centralizes receipt construction so the scheduler's evidence values, input-presence metadata, canonical witness, and state fingerprint are generated from the same context. This prevents a readable receipt from reporting fallback defaults while the scored state uses live inputs.
+
+
+## Descent CIV — promotion-context closure
+
+[Descent CIV](docs/DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md) corrects the active hysteresis threshold reported by a hold decision and gives the policy decision its own `pd-` content fingerprint, separate from the `fs-` fusion-state identity. The witness binds prior promotion state, action, fused score, and active threshold into lineage and bridge evidence.
