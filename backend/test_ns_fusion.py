@@ -359,6 +359,22 @@ class FusionStressTests(unittest.TestCase):
                     self.assertEqual(
                         empty["fitness_evidence"]["inputs"]["symbolic"]["attention"], 0.0
                     )
+                    field_presence = empty["fitness_evidence"]["inputs"]["symbolic"]["field_presence"]
+                    self.assertTrue(field_presence["resources_mapping"])
+                    self.assertFalse(field_presence["resource_attention"])
+                    zero_filled = module.apply_fusion(
+                        "neutral",
+                        {
+                            "Core": 0.5, "L5": 0.2, "L2": 0.1,
+                            "belief": {},
+                            "resources": {"attention": 0, "compute": 0, "memory_nodes": 0},
+                        },
+                    )
+                    self.assertAlmostEqual(empty["ns_fitness"], zero_filled["ns_fitness"])
+                    self.assertNotEqual(empty["fusion_state_id"], zero_filled["fusion_state_id"])
+                    self.assertTrue(
+                        zero_filled["fitness_evidence"]["inputs"]["symbolic"]["field_presence"]["resource_attention"]
+                    )
                     self.assertEqual(
                         module.fitness_state_id(
                             empty["fitness_evidence"]["fusion_state_witness"]
