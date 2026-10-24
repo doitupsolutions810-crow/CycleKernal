@@ -82,10 +82,12 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
         # valid canonical key can hide an invalid or contradictory legacy alias.
         admitted = []
         for source_name in present_names:
-            value = _json_number(
-                raw_metrics[source_name],
-                f"relay metric {canonical} alias {source_name}",
+            label = (
+                f"relay metric {canonical}"
+                if source_name == canonical
+                else f"relay metric {canonical} alias {source_name}"
             )
+            value = _json_number(raw_metrics[source_name], label)
             if not math.isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"relay metric {canonical} must be finite and in [0, 1]")
             admitted.append((source_name, value))
