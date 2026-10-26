@@ -47,6 +47,18 @@ class RelayProvenanceTests(unittest.TestCase):
         metrics = normalize_relay_metrics('{"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7}')
         self.assertEqual(metrics["Core"], 0.4)
 
+    def test_rejects_nonstandard_json_numeric_constants_everywhere(self):
+        # json.loads accepts these extensions unless parse_constant is overridden.
+        base = '"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7'
+        for token in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(ValueError, "non-standard JSON numeric constant"):
+                    normalize_relay_metrics("{" + base + ',"metadata":' + token + "}")
+                with self.assertRaisesRegex(ValueError, "non-standard JSON numeric constant"):
+                    normalize_relay_metrics("{" + base + ',"metadata":{"nested":' + token + "}}")
+                with self.assertRaisesRegex(ValueError, "non-standard JSON numeric constant"):
+                    normalize_relay_metrics('{"Core":' + token + ',"U2":0.2,"L2":0.03,"L5":0.7}')
+
     def test_rejects_duplicate_json_keys_before_object_construction(self):
         # JSON object construction is normally last-key-wins; relay ingestion
         # must reject this lossy parse before metrics reach scoring.
@@ -138,6 +150,10 @@ class RelayProvenanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "duplicate JSON object key: Core"):
                         module.normalize_relay_metrics(
                             '{"Core":0.4,"Core":0.8,"U2":0.2,"L2":0.03,"L5":0.7}'
+                        )
+                    with self.assertRaisesRegex(ValueError, "non-standard JSON numeric constant"):
+                        module.normalize_relay_metrics(
+                            '{"Core":0.4,"U2":0.2,"L2":0.03,"L5":0.7,"metadata":NaN}'
                         )
                     with self.assertRaisesRegex(ValueError, "relay stress_residual must be a JSON number"):
                         module.normalize_relay_metrics({
