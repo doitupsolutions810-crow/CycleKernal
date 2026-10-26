@@ -60,3 +60,8 @@ The relay boundary now rejects duplicate keys in JSON text before dictionary con
 ## Descent CVIX — one authoritative relay envelope
 
 Relay parsing accepts either direct metrics or a metrics wrapper, but not a wrapped observation plus recognized metric fields at the outer level. This prevents outer fields from being silently discarded while inner metrics win. Ordinary envelope metadata remains allowed. See [Descent CVIX](DESCENT_CVIX_RELAY_ENVELOPE_CLOSURE.md).
+
+
+## Descent CX — strict JSON token admission
+
+The parser now rejects `NaN`, `Infinity`, and `-Infinity` tokens globally at JSON decode time, including unused or nested metadata that metric validation would not inspect. Duplicate-key and envelope-closure checks remain in place. See [DESCENT_CX_STRICT_JSON_TOKENS.md](DESCENT_CX_STRICT_JSON_TOKENS.md). Hosted execution is still required for repository-level verification.
