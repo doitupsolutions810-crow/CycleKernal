@@ -52,6 +52,11 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
             raise ValueError(f"duplicate JSON object key: {key}")
         result[key] = value
     return result
+
+
+def _reject_json_constant(value: str) -> None:
+    """Reject Python's non-standard NaN/Infinity extensions to JSON."""
+    raise ValueError(f"non-standard JSON numeric constant: {value}")
 current_state: CognitiveState = CognitiveState(metric_source="unavailable")
 ws_clients: list = []
 
@@ -62,7 +67,7 @@ def normalize_relay_metrics(payload: Any) -> Dict[str, Any]:
         payload = payload.decode("utf-8")
     if isinstance(payload, str):
         try:
-            payload = json.loads(payload, object_pairs_hook=_unique_json_object)
+            payload = json.loads(\n                payload,\n                object_pairs_hook=_unique_json_object,\n                parse_constant=_reject_json_constant,\n            )
         except json.JSONDecodeError as exc:
             raise ValueError("relay message must be valid JSON") from exc
     if not isinstance(payload, Mapping):
