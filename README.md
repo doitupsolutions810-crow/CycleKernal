@@ -418,3 +418,8 @@ Relay ingestion now rejects repeated JSON object keys and validates all simultan
 ## Descent CVIX — relay envelope closure
 
 When a payload uses a metrics wrapper, recognized metric fields must live inside that wrapper. Contradictory or shadow metric fields at the outer level are rejected; ordinary metadata remains allowed. See [Descent CVIX](docs/DESCENT_CVIX_RELAY_ENVELOPE_CLOSURE.md).
+
+
+## Descent CX — strict JSON numeric-token admission
+
+The bridge rejects non-standard JSON numeric tokens (`NaN`, `Infinity`, `-Infinity`) anywhere in JSON text, including nested metadata, before envelope selection. Duplicate-key rejection remains active. See [Descent CX](docs/DESCENT_CX_STRICT_JSON_TOKENS.md). This is parser correctness, not source authentication.
