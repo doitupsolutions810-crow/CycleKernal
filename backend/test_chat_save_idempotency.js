@@ -143,6 +143,16 @@ test('rejects a header/body idempotency-key mismatch', async () => {
   assert.equal(fx.rows.size, 0);
 });
 
+
+test('rejects non-string operation IDs instead of coercing them', async () => {
+  const fx = createFixture();
+  const res = responseRecorder();
+  await fx.handler(request({ operationId: 123 }), res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'idempotency_key_invalid_type');
+  assert.equal(fx.rows.size, 0);
+});
+
 test('first save and replay return the same Mongo record without duplication', async () => {
   const fx = createFixture();
   const first = responseRecorder();
