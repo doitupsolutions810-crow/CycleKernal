@@ -11,6 +11,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { createIdempotentChatSaveHandler } = require('./chat_save_idempotency');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,6 +68,9 @@ const ChatHistorySchema = new mongoose.Schema({
   civId: String,
   message: String,
   response: String,
+  // Sparse uniqueness preserves existing rows that predate idempotency support.
+  operationId: String,
+  requestDigest: String,
   timestamp: { type: Date, default: Date.now },
   metadata: {
     attention: Number,
@@ -91,6 +95,11 @@ const SimulationSnapshotSchema = new mongoose.Schema({
     totalMemoryNodes: Number
   }
 });
+
+ChatHistorySchema.index(
+  { operationId: 1 },
+  { unique: true, sparse: true, name: 'uniq_chat_history_operation_id' }
+);
 
 const ChatHistory = mongoose.model('ChatHistory', ChatHistorySchema);
 const SimulationSnapshot = mongoose.model('SimulationSnapshot', SimulationSnapshotSchema);
@@ -137,38 +146,22 @@ app.get('/metrics', async (req, res) => {
   res.end(await register.metrics());
 });
 
-// Save chat interaction to MongoDB
-app.post('/api/chat/save', async (req, res) => {
-  try {
-    const { userId, civId, message, response, metadata } = req.body;
-    
-    const chatEntry = new ChatHistory({
-      userId,
-      civId,
-      message,
-      response,
-      metadata
-    });
-    
-    await chatEntry.save();
-    
-    // Update metrics
-    const totalChats = await ChatHistory.countDocuments();
-    chatHistorySize.set(totalChats);
-    
-    // Cache recent chat in Redis
-    await redisClient.setEx(
-      `chat:${userId}:latest`,
-      3600, // 1 hour TTL
-      JSON.stringify({ message, response, timestamp: new Date() })
+// Save chat interaction using a stable idempotency key. The MongoDB row is the
+// primary effect; metrics and Redis are ancillary and cannot turn a committed
+// save into a 500/no-effect signal.
+const saveChatHandler = createIdempotentChatSaveHandler({
+  ChatHistory,
+  chatHistorySize,
+  redisClient,
+  ensureReady: async () => {
+    await ChatHistory.collection.createIndex(
+      { operationId: 1 },
+      { unique: true, sparse: true, name: 'uniq_chat_history_operation_id' }
     );
-    
-    res.json({ status: 'success', id: chatEntry._id });
-  } catch (error) {
-    console.error('Error saving chat:', error);
-    res.status(500).json({ status: 'error', message: error.message });
-  }
+  },
+  logger: console,
 });
+app.post('/api/chat/save', saveChatHandler);
 
 // Get chat history for a user
 app.get('/api/chat/history/:userId', async (req, res) => {
