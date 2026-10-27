@@ -149,16 +149,28 @@ app.get('/metrics', async (req, res) => {
 // Save chat interaction using a stable idempotency key. The MongoDB row is the
 // primary effect; metrics and Redis are ancillary and cannot turn a committed
 // save into a 500/no-effect signal.
+let chatSaveIndexPromise;
+async function ensureChatSaveIdempotencyIndex() {
+  if (!chatSaveIndexPromise) {
+    chatSaveIndexPromise = ChatHistory.collection.createIndex(
+      { operationId: 1 },
+      { unique: true, sparse: true, name: 'uniq_chat_history_operation_id' }
+    );
+  }
+  try {
+    await chatSaveIndexPromise;
+  } catch (error) {
+    // A transient index-creation error must not permanently poison readiness.
+    chatSaveIndexPromise = null;
+    throw error;
+  }
+}
+
 const saveChatHandler = createIdempotentChatSaveHandler({
   ChatHistory,
   chatHistorySize,
   redisClient,
-  ensureReady: async () => {
-    await ChatHistory.collection.createIndex(
-      { operationId: 1 },
-      { unique: true, sparse: true, name: 'uniq_chat_history_operation_id' }
-    );
-  },
+  ensureReady: ensureChatSaveIdempotencyIndex,
   logger: console,
 });
 app.post('/api/chat/save', saveChatHandler);
