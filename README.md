@@ -367,3 +367,8 @@ For issues, questions, or contributions:
 ---
 
 **Built with ❤️ for simulation and monitoring excellence**
+
+
+## Chat-save idempotency
+
+The POST /api/chat/save endpoint requires a stable `Idempotency-Key` header or `operationId` body field to make retries safe after uncertain acknowledgements. See [docs/CHAT_SAVE_IDEMPOTENCY.md](docs/CHAT_SAVE_IDEMPOTENCY.md) for the request/response contract, the sparse unique MongoDB index, failure behavior, and guarantee limits.
