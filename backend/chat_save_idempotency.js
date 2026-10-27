@@ -116,11 +116,25 @@ function createIdempotentChatSaveHandler({
         replayed = true;
       } else {
         try {
-          chatEntry = await queryLean(ChatHistory.findOneAndUpdate(
+          const writeResult = await queryLean(ChatHistory.findOneAndUpdate(
             filter,
             { $setOnInsert: insert },
-            { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+            {
+              new: true,
+              upsert: true,
+              runValidators: true,
+              setDefaultsOnInsert: true,
+              includeResultMetadata: true,
+            },
           ));
+          if (writeResult && Object.hasOwn(writeResult, 'value') &&
+              Object.hasOwn(writeResult, 'lastErrorObject')) {
+            chatEntry = writeResult.value;
+            replayed = writeResult.lastErrorObject?.updatedExisting === true;
+          } else {
+            // Accommodate injected model adapters that return the document only.
+            chatEntry = writeResult;
+          }
         } catch (writeError) {
           // Duplicate-key can be a concurrent identical request; other database
           // errors can also occur after a write committed but its acknowledgement
