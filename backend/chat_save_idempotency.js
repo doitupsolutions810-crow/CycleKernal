@@ -68,6 +68,9 @@ function createIdempotentChatSaveHandler({
       ? String(req.get('Idempotency-Key') || '').trim()
       : String(req.headers?.['idempotency-key'] || req.headers?.['Idempotency-Key'] || '').trim();
     const bodyKey = body.operationId ?? body.operation_id ?? '';
+    if (bodyKey !== '' && typeof bodyKey !== 'string') {
+      return res.status(400).json({ status: 'error', error: 'idempotency_key_invalid_type' });
+    }
     if (headerKey && bodyKey && headerKey !== bodyKey) {
       return res.status(400).json({
         status: 'error',
