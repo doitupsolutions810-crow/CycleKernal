@@ -10,7 +10,7 @@ on:
       - "backend/package.json"
       - ".github/workflows/chat-save-idempotency.yml"
   push:
-    branches: [main]
+    branches: [main, "fix/chat-save-idempotency-20261027"]
     paths:
       - "backend/chat_save_idempotency.js"
       - "backend/test_chat_save_idempotency.js"
