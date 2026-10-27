@@ -1,14 +1,22 @@
+import asyncio
 import importlib.util
+import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+from websockets import serve
 
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "src" / "bridge"
 sys.path.insert(0, str(BRIDGE))
 
+import main as bridge_main
 from main import normalize_relay_metrics
-from traits import map_metrics_to_traits
+from traits import CognitiveState, map_metrics_to_traits
 from ns_fusion import fitness_state_id
 
 
@@ -266,6 +274,95 @@ class RelayProvenanceTests(unittest.TestCase):
         payload = map_metrics_to_traits(metrics, metric_source="relay").to_dict()
         self.assertEqual(payload["fitness_evidence"]["descent_source"], "provided")
         self.assertEqual(payload["fitness_evidence"]["stress_residual"], 3.5)
+
+
+class RelayEndToEndTests(unittest.IsolatedAsyncioTestCase):
+    async def _run_relay_to_http(self, raw_frame, expected_source, disconnect_after_send=False):
+        frame_sent = asyncio.Event()
+        socket_closed = asyncio.Event()
+
+        async def local_loopmem_relay(websocket):
+            await websocket.send(raw_frame)
+            frame_sent.set()
+            if disconnect_after_send:
+                await websocket.close()
+            else:
+                await websocket.wait_closed()
+            socket_closed.set()
+
+        async with serve(local_loopmem_relay, "127.0.0.1", 0) as relay_server:
+            relay_port = relay_server.sockets[0].getsockname()[1]
+            previous_state = bridge_main.current_state
+            bridge_main.current_state = CognitiveState(metric_source="unavailable")
+            with patch.dict(os.environ, {
+                "RELAY_URL": f"ws://127.0.0.1:{relay_port}",
+                "ALLOW_SYNTHETIC_RELAY": "0",
+            }):
+                subscriber = asyncio.create_task(bridge_main.subscribe_to_relay())
+                try:
+                    await asyncio.wait_for(frame_sent.wait(), timeout=2.0)
+                    if expected_source == "unavailable":
+                        # The client closes only after it rejected the frame.
+                        await asyncio.wait_for(socket_closed.wait(), timeout=2.0)
+
+                    transport = httpx.ASGITransport(app=bridge_main.app)
+                    async with httpx.AsyncClient(
+                        transport=transport, base_url="http://cyclekernel.test"
+                    ) as client:
+                        deadline = asyncio.get_running_loop().time() + 2.0
+                        while True:
+                            response = await client.get("/v1/current_mood")
+                            self.assertEqual(response.status_code, 200)
+                            state = response.json()
+                            if state["metric_source"] == expected_source:
+                                break
+                            if asyncio.get_running_loop().time() >= deadline:
+                                self.fail(
+                                    f"relay state did not reach {expected_source!r}; "
+                                    f"last source was {state['metric_source']!r}"
+                                )
+                            await asyncio.sleep(0.01)
+                        health_response = await client.get("/health")
+                        self.assertEqual(health_response.status_code, 200)
+                        return state, health_response.json()
+                finally:
+                    subscriber.cancel()
+                    await asyncio.gather(subscriber, return_exceptions=True)
+                    bridge_main.current_state = previous_state
+
+    async def test_real_websocket_frame_reaches_public_mood_and_health_endpoints(self):
+        frame = json.dumps({
+            "metrics": {"Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65}
+        })
+        state, health = await self._run_relay_to_http(frame, "relay")
+        self.assertAlmostEqual(state["metrics"]["Core"], 0.42)
+        self.assertAlmostEqual(state["core"], 0.42)
+        self.assertTrue(state["fusion_state_id"])
+        self.assertEqual(state["fitness_evidence"]["fusion_state_id"], state["fusion_state_id"])
+        self.assertEqual(health["metric_source"], "relay")
+        self.assertEqual(health["status"], "ghost-online")
+
+    async def test_malformed_frame_is_rejected_without_synthetic_fallback(self):
+        frame = json.dumps({
+            "metrics": {"Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65},
+            "Core": 0.99,
+        })
+        state, health = await self._run_relay_to_http(frame, "unavailable")
+        self.assertEqual(state["metric_source"], "unavailable")
+        self.assertEqual(health["metric_source"], "unavailable")
+        self.assertEqual(health["status"], "degraded")
+
+    async def test_disconnect_after_valid_frame_marks_published_state_stale(self):
+        frame = json.dumps({
+            "metrics": {"Core": 0.42, "U2": 0.31, "L2": 0.07, "L5": 0.65}
+        })
+        state, health = await self._run_relay_to_http(
+            frame, "relay_stale", disconnect_after_send=True
+        )
+        self.assertAlmostEqual(state["metrics"]["Core"], 0.42)
+        self.assertEqual(state["metric_source"], "relay_stale")
+        self.assertEqual(health["metric_source"], "relay_stale")
+        self.assertEqual(health["status"], "degraded")
 
 
 if __name__ == "__main__":
