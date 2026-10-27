@@ -7,8 +7,9 @@ import hmac
 import logging
 import os
 import time
+from copy import deepcopy
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 
 import numpy as np
 from flask import Flask, jsonify, request
@@ -17,7 +18,7 @@ from flask_cors import CORS
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from descent_engine import DescentEngine, entropy_with_stress
-from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
+from ns_fusion import (colony_genome, fuse_mood, genome_id, fitness_channels, build_fusion_receipt)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ def civ_template(civ_id):
         "ns_fitness": 0.0,
         "mood_dot": 0.5,
         "mood": "neutral",
+        "fusion_state_id": "",
+        "promotion_decision_id": "",
+        "fitness_evidence": {},
         "created_at": datetime.now().isoformat(),
     }
     civ["genome_id"] = genome_id(f"{civ_id}:{faction}")
@@ -64,11 +68,18 @@ class Universe:
         self.myths = {}
         self.cycle_count = 0
         self.promote_log = []
+        self.max_promotion_log = 500
+        self.fusion_log = []
+        self.max_fusion_log = 500
         # One scheduler-driven Great Scale tick per universe simulation cycle.
         self.descent_engine = DescentEngine(start=1.0, k=0.5)
-        self._descent_state_lock = Lock()
+        self._descent_state_lock = RLock()
 
     def add_civilization(self, civ_id):
+        with self._descent_state_lock:
+            return self._add_civilization_locked(civ_id)
+
+    def _add_civilization_locked(self, civ_id):
         if civ_id not in self.civilizations:
             civ = civ_template(civ_id)
             self.civilizations[civ_id] = civ
@@ -78,6 +89,11 @@ class Universe:
         return self.civilizations[civ_id]
 
     def colony_snapshot(self):
+        """Return one internally consistent, detached civilization/lineage snapshot."""
+        with self._descent_state_lock:
+            return deepcopy(self._colony_snapshot_locked())
+
+    def _colony_snapshot_locked(self):
         civs = list(self.civilizations.values())
         promoted = [c for c in civs if c.get("promoted")]
         active = [c for c in civs if c.get("state") in ("active", "promoted")]
@@ -92,24 +108,34 @@ class Universe:
             "dormant": len(dormant),
             "genome_id": genome,
             "mood_dot": round(mood_dot, 4),
+            "cycle_count": self.cycle_count,
             "members": [
                 {
                     "id": c["id"],
                     "genome_id": c.get("genome_id"),
+                    "fusion_state_id": c.get("fusion_state_id", ""),
+                    "promotion_decision_id": c.get("promotion_decision_id", ""),
                     "state": c.get("state"),
                     "promoted": c.get("promoted", False),
                     "ns_fitness": c.get("ns_fitness", 0.0),
                     "mood_dot": c.get("mood_dot", 0.5),
                     "mood": c.get("mood", "neutral"),
+                    "fitness_evidence": c.get("fitness_evidence", {}),
                 }
                 for c in civs
             ],
+            "fusion_history": self.fusion_log[-100:],
+            "promotion_history": self.promote_log[-100:],
         }
 
     def simulate_cycle(self):
+        """Advance geometry, fusion, and lineage under one snapshot lock."""
         with self._descent_state_lock:
-            self.cycle_count += 1
-            descent_record = self.descent_engine.tick()
+            self._simulate_cycle_locked()
+
+    def _simulate_cycle_locked(self):
+        self.cycle_count += 1
+        descent_record = self.descent_engine.tick()
         residual = descent_record["residual"]
         great_scale_descent_ticks.inc()
         great_scale_descent_residual.labels(universe_id=self.id).set(residual)
@@ -132,33 +158,87 @@ class Universe:
                 mood = "convergent"
             base_entropy = 0.15 + (0.5 if mood == "survival" else 0.0)
             entropy = entropy_with_stress(base_entropy, residual)
-            fit = ns_fitness(
+            channels = fitness_channels(
                 belief=civ["belief"],
                 resources=civ["resources"],
                 core=civ["belief"]["truth"],
                 entropy=entropy,
                 coupling=0.08 if mood == "convergent" else 0.02,
             )
+            fit = channels["ns_fitness"]
             fused = fuse_mood(fit, mood)
-            decision = promote_decision(fused, already_promoted=bool(civ.get("promoted")))
+            already_promoted = bool(civ.get("promoted"))
+            label = mood
+            label_projection_threshold = None
+            if fused >= 0.70 and mood == "neutral":
+                label = "convergent"
+                label_projection_threshold = "convergent_label"
+            elif fused < 0.30 and mood != "survival":
+                label = "survival"
+                label_projection_threshold = "survival_label"
+            receipt = build_fusion_receipt(
+                channels,
+                fused,
+                stress_residual=residual,
+                stress_residual_normalized=residual / 7.0,
+                neural_entropy_used=entropy,
+                descent_source="simulation_scheduler",
+                mood_input=mood,
+                mood_output=label,
+                label_projection_threshold=label_projection_threshold,
+                metric_source="simulation_scheduler",
+                core=float(civ["belief"]["truth"]),
+                base_entropy=base_entropy,
+                coupling=0.08 if mood == "convergent" else 0.02,
+                belief=civ["belief"],
+                resources=civ["resources"],
+                already_promoted=already_promoted,
+            )
+            state_id = receipt["fusion_state_id"]
+            evidence = receipt["fitness_evidence"]
+            decision = receipt["decision"]
+            promotion_decision_id = receipt["promotion_decision_id"]
             civ["ns_fitness"] = round(fit, 4)
             civ["mood_dot"] = round(fused, 4)
-            civ["mood"] = mood if decision["action"] == "hold" else mood
+            civ["mood"] = label
+            civ["fusion_state_id"] = state_id
+            civ["promotion_decision_id"] = promotion_decision_id
+            civ["fitness_evidence"] = evidence
             civ["stress_residual"] = residual
             civ["stress_residual_normalized"] = round(residual / 7.0, 8)
             civ["neural_entropy_used"] = round(entropy, 8)
+            fusion_event = {
+                "cycle": self.cycle_count,
+                "civ_id": civ["id"],
+                "genome_id": civ.get("genome_id", ""),
+                "fusion_state_id": state_id,
+                "promotion_decision_id": promotion_decision_id,
+                "ns_fitness": round(fit, 4),
+                "mood_dot": round(fused, 4),
+                "action": decision["action"],
+                "metric_source": "simulation_scheduler",
+                "fitness_evidence": evidence,
+            }
+            self.fusion_log.append(fusion_event)
+            if len(self.fusion_log) > self.max_fusion_log:
+                del self.fusion_log[:-self.max_fusion_log]
             if decision["action"] == "promote":
                 civ["promoted"] = True
                 civ["state"] = "promoted"
-                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count})
+                self.promote_log.append({"civ_id": civ["id"], "action": "promote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "promotion_decision_id": promotion_decision_id, "fitness_evidence": evidence})
+                if len(self.promote_log) > self.max_promotion_log:
+                    del self.promote_log[:-self.max_promotion_log]
             elif decision["action"] == "demote":
                 civ["promoted"] = False
                 civ["state"] = "active"
-                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count})
+                self.promote_log.append({"civ_id": civ["id"], "action": "demote", "fused": decision["fused"], "cycle": self.cycle_count, "genome_id": civ.get("genome_id", ""), "fusion_state_id": state_id, "promotion_decision_id": promotion_decision_id, "fitness_evidence": evidence})
+                if len(self.promote_log) > self.max_promotion_log:
+                    del self.promote_log[:-self.max_promotion_log]
         logger.debug(f"Completed cycle {self.cycle_count} for universe {self.id}")
 
     def descent_snapshot(self, running=False):
-        return self.descent_engine.snapshot(running=running)
+        with self._descent_state_lock:
+            return self.descent_engine.snapshot(running=running)
 
     def scale_state_snapshot(self, running=False):
         with self._descent_state_lock:
@@ -170,57 +250,81 @@ class Universe:
                 "stress_residual_normalized": snapshot["residualNormalized"],
             }
 
+    def state_snapshot(self, running=False):
+        """Deep-copied, internally consistent per-universe state at one cycle boundary."""
+        with self._descent_state_lock:
+            return {
+                "id": self.id,
+                "civilizations": deepcopy(self.civilizations),
+                "factions": deepcopy(self.factions),
+                "cycle_count": self.cycle_count,
+                "colony": deepcopy(self._colony_snapshot_locked()),
+                "descent": self.descent_engine.snapshot(running=running),
+            }
+
 class CycleKernel:
     def __init__(self):
         self.universes = {}
+        self._universe_lock = RLock()
         self.audit_logs = []
         self.running = False
 
     def create_universe(self, universe_id):
-        if universe_id not in self.universes:
-            self.universes[universe_id] = Universe(universe_id)
-            logger.info(f"Created universe {universe_id}")
-        return self.universes[universe_id]
+        with self._universe_lock:
+            if universe_id not in self.universes:
+                self.universes[universe_id] = Universe(universe_id)
+                logger.info(f"Created universe {universe_id}")
+            return self.universes[universe_id]
 
     def run_simulation(self, cycles=1):
         start_time = time.time()
+        with self._universe_lock:
+            universes = list(self.universes.values())
         for _ in range(cycles):
-            for universe in self.universes.values():
+            for universe in universes:
                 universe.simulate_cycle()
             simulation_cycles.inc()
         duration = time.time() - start_time
         simulation_duration.observe(duration)
-        total_civs = sum(len(u.civilizations) for u in self.universes.values())
-        total_att = sum(sum(c["resources"]["attention"] for c in u.civilizations.values()) for u in self.universes.values())
-        total_comp = sum(sum(c["resources"]["compute"] for c in u.civilizations.values()) for u in self.universes.values())
-        promoted = sum(1 for u in self.universes.values() for c in u.civilizations.values() if c.get("promoted"))
+        snapshots = [universe.state_snapshot() for universe in universes]
+        civs = [civ for snapshot in snapshots for civ in snapshot["civilizations"].values()]
+        total_civs = len(civs)
+        total_att = sum(civ["resources"]["attention"] for civ in civs)
+        total_comp = sum(civ["resources"]["compute"] for civ in civs)
+        promoted = sum(1 for civ in civs if civ.get("promoted"))
         active_civilizations.set(total_civs)
         total_attention.set(total_att)
         total_compute.set(total_comp)
         promoted_colonists.set(promoted)
         logger.info(f"Ran {cycles} simulation cycles in {duration:.3f}s")
 
-    def colony(self):
-        snapshots = {uid: u.colony_snapshot() for uid, u in self.universes.items()}
+    @staticmethod
+    def _aggregate_colony_snapshots(snapshots):
         primary = snapshots.get("U1") or next(iter(snapshots.values()), {})
-        return {"universes": snapshots, **{k: primary.get(k) for k in ("active", "promoted", "held", "dormant", "genome_id", "mood_dot")}}
+        return {
+            "universes": snapshots,
+            **{key: primary.get(key) for key in ("active", "promoted", "held", "dormant", "genome_id", "mood_dot")},
+        }
+
+    def colony(self):
+        with self._universe_lock:
+            universes = dict(self.universes)
+        snapshots = {uid: universe.colony_snapshot() for uid, universe in universes.items()}
+        return self._aggregate_colony_snapshots(snapshots)
 
     def get_state(self):
+        with self._universe_lock:
+            universes = dict(self.universes)
+        universe_states = {
+            uid: universe.state_snapshot(running=self.running)
+            for uid, universe in universes.items()
+        }
+        colony_snapshots = {uid: state["colony"] for uid, state in universe_states.items()}
         return {
-            "universes": {
-                uid: {
-                    "id": u.id,
-                    "civilizations": u.civilizations,
-                    "factions": u.factions,
-                    "cycle_count": u.cycle_count,
-                    "colony": u.colony_snapshot(),
-                    "descent": u.descent_snapshot(running=self.running),
-                }
-                for uid, u in self.universes.items()
-            },
-            "total_civilizations": sum(len(u.civilizations) for u in self.universes.values()),
-            "colony": self.colony(),
-            "audit_logs": self.audit_logs[-100:],
+            "universes": universe_states,
+            "total_civilizations": sum(len(state["civilizations"]) for state in universe_states.values()),
+            "colony": self._aggregate_colony_snapshots(colony_snapshots),
+            "audit_logs": deepcopy(self.audit_logs[-100:]),
         }
 
 
@@ -234,50 +338,60 @@ class ChatMemoryBridge:
         u1 = self.universes.get("U1")
         if not u1:
             u1 = self.kernel.create_universe("U1")
-        civ_id = self.chat_to_civ_map.get(user_id)
-        if not civ_id or civ_id not in u1.civilizations:
-            civ_id = f"user_{user_id[:6]}"
-            u1.add_civilization(civ_id)
-            self.chat_to_civ_map[user_id] = civ_id
-        civ = u1.civilizations[civ_id]
-        civ["resources"]["attention"] = min(150, civ["resources"]["attention"] + 10)
-        civ["resources"]["compute"] += 5
-        message_impact = len(message) / 1000
-        civ["belief"]["truth"] = float(np.clip(civ["belief"]["truth"] + message_impact, 0, 1))
-        civ["belief"]["deception"] = 1 - civ["belief"]["truth"]
-        event = {
-            "type": "chat_interaction",
-            "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
-            "impact": {"civ_id": civ_id, "attention_delta": 10, "compute_delta": 5, "genome_id": civ.get("genome_id")},
-        }
+        with u1._descent_state_lock:
+            civ_id = self.chat_to_civ_map.get(user_id)
+            if not civ_id or civ_id not in u1.civilizations:
+                civ_id = f"user_{user_id[:6]}"
+                u1.add_civilization(civ_id)
+                self.chat_to_civ_map[user_id] = civ_id
+            civ = u1.civilizations[civ_id]
+            civ["resources"]["attention"] = min(150, civ["resources"]["attention"] + 10)
+            civ["resources"]["compute"] += 5
+            message_impact = len(message) / 1000
+            civ["belief"]["truth"] = float(np.clip(civ["belief"]["truth"] + message_impact, 0, 1))
+            civ["belief"]["deception"] = 1 - civ["belief"]["truth"]
+            event = {
+                "type": "chat_interaction",
+                "user_id": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "impact": {"civ_id": civ_id, "attention_delta": 10, "compute_delta": 5, "genome_id": civ.get("genome_id")},
+            }
+            civ_snapshot = deepcopy(civ)
         self.kernel.audit_logs.append(event)
         chat_interactions.inc()
-        socketio.emit("event", {"message": f"Memory updated for {civ_id} genome {civ.get('genome_id')}", "civ_state": civ})
+        socketio.emit("event", {"message": f"Memory updated for {civ_id} genome {civ_snapshot.get('genome_id')}", "civ_state": civ_snapshot})
         logger.info(f"Processed interaction for user {user_id} -> civ {civ_id}")
         return civ_id
 
     def get_context_from_memory(self, user_id):
-        civ_id = self.chat_to_civ_map.get(user_id)
-        if not civ_id:
+        if not self.chat_to_civ_map.get(user_id):
             return {"status": "new_user", "message": "New user, no prior memory."}
         u1 = self.universes.get("U1")
         if not u1:
             return {"status": "no_universe", "message": "Universe not initialized."}
-        civ = u1.civilizations.get(civ_id)
-        if not civ:
-            return {"status": "no_civ", "message": "Civilization not found."}
-        related_myths = [m for m in u1.myths.values() if m.get("faction") == civ["faction"]]
+        with u1._descent_state_lock:
+            civ_id = self.chat_to_civ_map.get(user_id)
+            if not civ_id:
+                return {"status": "new_user", "message": "New user, no prior memory."}
+            civ = u1.civilizations.get(civ_id)
+            if not civ:
+                return {"status": "no_civ", "message": "Civilization not found."}
+            user_state = deepcopy(civ)
+            related_myths = deepcopy([
+                myth for myth in u1.myths.values()
+                if myth.get("faction") == civ["faction"]
+            ])
+            universe_vibe = {
+                "total_civs": len(u1.civilizations),
+                "active_factions": deepcopy(u1.factions),
+                "cycle_count": u1.cycle_count,
+                "colony": deepcopy(u1._colony_snapshot_locked()),
+            }
         return {
             "status": "success",
-            "user_state": civ,
+            "user_state": user_state,
             "crystallized_memories": related_myths,
-            "universe_vibe": {
-                "total_civs": len(u1.civilizations),
-                "active_factions": u1.factions,
-                "cycle_count": u1.cycle_count,
-                "colony": u1.colony_snapshot(),
-            },
+            "universe_vibe": universe_vibe,
         }
 
 

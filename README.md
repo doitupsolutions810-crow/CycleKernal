@@ -367,3 +367,59 @@ For issues, questions, or contributions:
 ---
 
 **Built with ❤️ for simulation and monitoring excellence**
+
+
+## Descent C — typed missingness and source-preserving fusion
+
+[Descent C](docs/DESCENT_C_TYPED_MISSINGNESS.md) distinguishes absent symbolic inputs from explicitly empty mappings. The fusion baseline and schema stay backward-compatible for absent inputs, while explicit empty objects remain visible in source metadata and the canonical state witness.
+
+
+[Descent CI — Field-presence closure](docs/DESCENT_CI_WITNESS_COMPLETENESS.md) extends System 25 by preserving recognized field presence and validated-but-unscored input fields in the fusion witness. Equal score no longer implies equal supplied state.
+
+
+## Descent CII — explicit-null closure
+
+[Descent CII](docs/DESCENT_CII_EXPLICIT_NULL_CLOSURE.md) closes the final missingness ambiguity at the computation boundary: omitted mappings continue to use documented defaults, valid mappings (including empty mappings) remain explicit evidence, and supplied null/non-mapping values fail closed in the backend and both bridges.
+
+
+## Descent CIII — evidence/identity concordance
+
+[Descent CIII](docs/DESCENT_CIII_EVIDENCE_IDENTITY_CONCORDANCE.md) centralizes receipt construction so the scheduler's evidence values, input-presence metadata, canonical witness, and state fingerprint are generated from the same context. This prevents a readable receipt from reporting fallback defaults while the scored state uses live inputs.
+
+
+## Descent CIV — promotion-context closure
+
+[Descent CIV](docs/DESCENT_CIV_PROMOTION_CONTEXT_CLOSURE.md) corrects the active hysteresis threshold reported by a hold decision and gives the policy decision its own `pd-` content fingerprint, separate from the `fs-` fusion-state identity. The witness binds prior promotion state, action, fused score, and active threshold into lineage and bridge evidence.
+
+
+## Descent CV — execution-evidence closure
+
+[Descent CV](docs/DESCENT_CV_EXECUTION_EVIDENCE_CLOSURE.md) distinguishes code/test failures from jobs that never ran. The current Actions failures have `runner_id=0` and no executed steps. The adjacent `swarm-vm-runner` docs explain the runner-label mismatch, but public `pull_request` jobs should not be moved blindly onto a Docker-socket-enabled self-hosted runner before registration scope and trust controls are in place.
+
+
+## Descent CVI — typed numerical admission
+
+[Descent CVI](docs/DESCENT_CVI_TYPED_NUMERIC_ADMISSION.md) closes a Python type-coercion hole: booleans and numeric strings previously passed `float(...)` and could become score-bearing inputs. The common `_json_number` guard rejects those values across belief/resources and neural/top-level fusion metrics before range checks, with regression coverage across all three fusion copies. Valid numeric inputs and scoring thresholds are unchanged.
+
+
+The Descent CVI guard also runs at both relay ingress parsers, before type information is lost through normalization. Raw booleans, numeric strings, explicit nulls, and overflowing integer inputs cannot become ordinary floating-point metrics. Cross-copy relay parser tests are included; hosted execution remains blocked until a runner is assigned.
+
+
+## Descent CVII — validation frontier
+
+[Descent CVII](docs/DESCENT_CVII_VALIDATION_FRONTIER.md) formalizes the root cause behind the relay-normalization bypass: when a non-injective transform maps different raw types to the same value, downstream validation cannot recover the distinction. Both bridge parsers now validate raw numeric types before float normalization, with cross-copy regressions. Great Scale mapping: System 30 — validation frontier.
+
+
+## Descent CVIII — alias concordance
+
+Relay ingestion now rejects repeated JSON object keys and validates all simultaneously present canonical/legacy metric spellings. Matching aliases remain compatible; contradictory or invalid secondary aliases fail closed. See [Descent CVIII](docs/DESCENT_CVIII_ALIAS_CONCORDANCE.md). This is a data-integrity rule, not relay authentication.
+
+
+## Descent CVIX — relay envelope closure
+
+When a payload uses a metrics wrapper, recognized metric fields must live inside that wrapper. Contradictory or shadow metric fields at the outer level are rejected; ordinary metadata remains allowed. See [Descent CVIX](docs/DESCENT_CVIX_RELAY_ENVELOPE_CLOSURE.md).
+
+
+## Descent CX — strict JSON numeric-token admission
+
+The bridge rejects non-standard JSON numeric tokens (`NaN`, `Infinity`, `-Infinity`) anywhere in JSON text, including nested metadata, before envelope selection. Duplicate-key rejection remains active. See [Descent CX](docs/DESCENT_CX_STRICT_JSON_TOKENS.md). This is parser correctness, not source authentication.

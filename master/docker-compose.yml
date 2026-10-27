@@ -8,6 +8,9 @@ services:
     container_name: ck-cognitive-bridge
     ports:
       - "8090:8090"
+    environment:
+      - RELAY_URL=${RELAY_URL:-}
+      - ALLOW_SYNTHETIC_RELAY=${ALLOW_SYNTHETIC_RELAY:-1}
     networks: [cyclekernel-net]
     restart: unless-stopped
     healthcheck:
