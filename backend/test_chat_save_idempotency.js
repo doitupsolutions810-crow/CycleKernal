@@ -195,7 +195,7 @@ test('database error after a committed upsert is reconciled by the same operatio
   fx.failAfterUpsert();
   const first = responseRecorder();
   await fx.handler(request(), first);
-  assert.equal(first.statusCode, 201);
+  assert.equal(first.statusCode, 200);
   assert.equal(first.body.status, 'success');
   assert.equal(first.body.replayed, true);
   assert.equal(fx.rows.size, 1);
