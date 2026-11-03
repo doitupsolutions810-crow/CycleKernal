@@ -7,7 +7,10 @@ before it will treat a 401 as auth failure, and relies on duplicate: true.
 from __future__ import annotations
 
 import json
+import os
 import socket
+import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -296,3 +299,35 @@ def test_fusion_token_wins_over_shared_token(bridge_env, monkeypatch):
     assert shared.json()["detail"] == "Bad admin token"
     assert fusion.status_code == 200
     assert bearer.status_code == 200
+
+
+def _boot_from_new_process() -> str:
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.path.join(root, "src", "bridge")
+    env["CK_SYNTHETIC"] = "0"
+    out = subprocess.check_output(
+        [sys.executable, "-c", "import main; print(main.BOOT_ID)"],
+        cwd=root,
+        env=env,
+    )
+    return out.decode().strip()
+
+
+def test_boot_id_is_stable_for_the_process_lifetime(bridge_env):
+    with TestClient(main.app) as client:
+        first = client.get("/health").json()["boot"]
+        second = client.get("/health").json()["boot"]
+    assert first == second == main.BOOT_ID
+    assert isinstance(first, str) and len(first) == 32
+    main.reset_runtime_state()
+    with TestClient(main.app) as client:
+        assert client.get("/health").json()["boot"] == first
+
+
+def test_boot_id_changes_across_process_restarts():
+    other = _boot_from_new_process()
+    again = _boot_from_new_process()
+    assert other != main.BOOT_ID
+    assert again != main.BOOT_ID
+    assert other != again

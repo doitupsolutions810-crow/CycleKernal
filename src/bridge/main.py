@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -42,6 +43,8 @@ VERSION = "3.3.0"
 FUSION_MAX_BODY_BYTES = 4096
 DEFAULT_EVENTS_PATH = "/var/lib/cyclekernel/events.json"
 STORE_VERSION = 1
+# New value in each process. The Fusion Bridge treats a change as a peer restart.
+BOOT_ID = secrets.token_hex(16)
 _EVENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 EVENT_SOURCES = ("avrone", "cyclekernal", "greatscale")
 EVENT_KINDS = (
@@ -736,6 +739,7 @@ async def health():
     return {
         "status": "ghost-online",
         "version": VERSION,
+        "boot": BOOT_ID,
         "timestamp": _now(),
         "mode": mode,
         "mood": current_state.mood,

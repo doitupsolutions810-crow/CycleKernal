@@ -27,7 +27,7 @@ The old fixed sample heartbeat runs only when `CK_SYNTHETIC=1`. `GET /health` re
 
 ## HTTP
 
-- `GET /health` — liveness plus mode, relay counters, and event counts
+- `GET /health` — liveness plus mode, relay counters, event counts, and `boot` (random, fixed until this process exits)
 - `GET /v1/current_mood` — latest cognitive state
 - `POST /v1/events` — Fusion Bridge intake. `POST /events` is the same handler. Send `X-Admin-Token` or `Authorization: Bearer`, compared exactly (trailing whitespace does not match). A body over 4096 bytes is 413 before the token is checked. The same id returns `{"accepted": true, "duplicate": true, "id": "..."}` and is not stored again. The log is rewritten atomically at `CK_EVENTS_PATH` before the ack; a corrupt file returns 503 and is left in place
 - `GET /v1/events` — same credentials, debug read of the ring. `GET /events` is the alias
