@@ -34,7 +34,7 @@ cd backend
 npm run test:auth
 ```
 
-The new module and tests require only Node built-ins. An isolated Node 22.16.0 run passed 7/7 focused cases covering disabled configuration, missing/wrong tokens, both accepted header forms, ambiguous/duplicate headers, whitespace and invalid value types. The module parsed under `node --check`.
+The new module and tests require only Node built-ins. An isolated Node 22.16.0 run passed 8/8 focused cases covering disabled configuration, missing/wrong tokens, both accepted header forms, ambiguous/duplicate headers, whitespace invalid value types, and registration of the gate before every private route. The module parsed under `node --check`.
 
 **Unverified:** full Express+MongoDB+Redis integration; actual gateway/proxy behavior; real trusted-caller migration; cross-tenant isolation; production configuration and hosted CI. No deployment or main-branch mutation is part of this draft.
 
