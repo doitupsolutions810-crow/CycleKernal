@@ -1,5 +1,21 @@
 version: "3.8"
 services:
+  ws-relay:
+    build: ./src/relay
+    container_name: cyclekernel-ws-relay
+    ports:
+      - "127.0.0.1:8081:8081"
+    networks:
+      - cyclekernel-network
+    environment:
+      - CK_RELAY_QUEUE_MAX=${CK_RELAY_QUEUE_MAX:-32}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   cognitive-bridge:
     build: ./src/bridge
     container_name: cyclekernel-cognitive-bridge
@@ -7,11 +23,29 @@ services:
       - "8090:8090"
     networks:
       - cyclekernel-network
+    depends_on:
+      ws-relay:
+        condition: service_healthy
     environment:
-      - RELAY_URL=ws://ws-relay:8081/ws/out
+      # Values come from the shell or a gitignored .env copied from .env.example.
+      - WS_RELAY_URL=${WS_RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - RELAY_URL=${RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - CK_SYNTHETIC=${CK_SYNTHETIC:-0}
+      - CK_FUSION_TOKEN=${CK_FUSION_TOKEN:-}
+      - FUSION_TOKEN=${FUSION_TOKEN:-}
+      - CK_EVENTS_TOKEN=${CK_EVENTS_TOKEN:-}
+      - CK_EVENTS_TOKEN_PREVIOUS=${CK_EVENTS_TOKEN_PREVIOUS:-}
+      - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-4096}
+      - CK_EVENTS_MAX_RECENT=${CK_EVENTS_MAX_RECENT:-100}
+      - CK_EVENTS_PATH=${CK_EVENTS_PATH:-/var/lib/cyclekernel/events.json}
+    volumes:
+      - cyclekernel-events:/var/lib/cyclekernel
     restart: unless-stopped
 
 networks:
   cyclekernel-network:
     external: true
     name: cyclekernel-network
+
+volumes:
+  cyclekernel-events:

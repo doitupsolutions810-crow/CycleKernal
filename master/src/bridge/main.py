@@ -1,86 +1,38 @@
+"""Dev entrypoint for the master tree.
+
+The running image is the repo ``src/bridge`` service. ``master/docker-compose.yml``
+builds that context so this file is not what the container executes. From a
+checkout, ``uvicorn main:app`` in this directory loads the same app: real relay
+intake, ``/events``, and ``/v1/feedback``.
 """
-CognitiveBridge Service — CycleKernel Master v4.0
-Shared mood engine for all sub-agents and the orchestrator.
-"""
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-import logging
-from typing import Dict
-from datetime import datetime
-from traits import map_metrics_to_traits, CognitiveState
+from __future__ import annotations
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("cognitive-bridge")
+import importlib.util
+import sys
+from pathlib import Path
 
-app = FastAPI(title="CycleKernel CognitiveBridge", version="4.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_CANONICAL = Path(__file__).resolve().parents[3] / "src" / "bridge" / "main.py"
+if not _CANONICAL.is_file():
+    raise RuntimeError(
+        f"Canonical bridge is missing at {_CANONICAL}. "
+        "Build the image from src/bridge, which is what master/docker-compose.yml does."
+    )
 
-current_state = CognitiveState()
-ws_clients: list = []
+_BRIDGE_DIR = str(_CANONICAL.parent)
+if _BRIDGE_DIR not in sys.path:
+    sys.path.insert(0, _BRIDGE_DIR)
 
+_spec = importlib.util.spec_from_file_location("ck_bridge_canonical", _CANONICAL)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"Cannot load canonical bridge from {_CANONICAL}")
+_module = importlib.util.module_from_spec(_spec)
+sys.modules["ck_bridge_canonical"] = _module
+_spec.loader.exec_module(_module)
 
-@app.on_event("startup")
-async def startup():
-    logger.info("CognitiveBridge v4.0 online")
-    asyncio.create_task(_synthetic_heartbeat())
+app = _module.app
 
+if __name__ == "__main__":
+    import uvicorn
 
-async def _synthetic_heartbeat():
-    """Drives a continuous LoopMem stream when no external WS Relay is present."""
-    import math
-    t = 0.0
-    while True:
-        t += 0.08
-        metrics = {
-            "Core": 0.25 + 0.55 * (0.5 + 0.5 * math.sin(t * 0.35)),
-            "U2": 0.3 + 0.4 * (0.5 + 0.5 * math.sin(t * 0.6 + 1)),
-            "L2": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
-            "L5": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
-            "entropy": 0.3 + 0.6 * (0.5 + 0.5 * math.sin(t * 0.5)),
-            "coupling": 0.01 + 0.09 * (0.5 + 0.5 * math.sin(t * 0.9 + 2)),
-        }
-        await sync_state(metrics)
-        await asyncio.sleep(1.5)
-
-
-async def sync_state(metrics: Dict):
-    global current_state
-    current_state = map_metrics_to_traits(metrics)
-    for ws in ws_clients[:]:
-        try:
-            await ws.send_json(current_state.to_dict())
-        except Exception:
-            if ws in ws_clients:
-                ws_clients.remove(ws)
-
-
-@app.get("/v1/current_mood")
-async def get_current_mood():
-    return current_state.to_dict()
-
-
-@app.post("/v1/feedback")
-async def ingest_feedback(payload: Dict):
-    """Closed-loop entry point: conversation outcomes feed back into LoopMem."""
-    logger.info(f"Feedback received: {payload}")
-    return {"status": "ingested", "timestamp": datetime.utcnow().isoformat()}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ghost-online", "version": "4.0.0", "mood": current_state.mood}
-
-
-@app.websocket("/ws/hud")
-async def hud_stream(websocket: WebSocket):
-    await websocket.accept()
-    ws_clients.append(websocket)
-    try:
-        await websocket.send_json(current_state.to_dict())
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        if websocket in ws_clients:
-            ws_clients.remove(websocket)
+    uvicorn.run(app, host="0.0.0.0", port=8090)
