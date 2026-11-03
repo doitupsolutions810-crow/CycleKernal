@@ -314,6 +314,90 @@ def _boot_from_new_process() -> str:
     return out.decode().strip()
 
 
+def test_invalid_utf8_body_is_400_not_500(bridge_env):
+    raw = b'{"id":"evt-bad","source":"avrone","kind":"finding","run_id":"run-1","payload":{"text":"ab\xe2\x82"},"ts":1}'
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/events",
+            content=raw,
+            headers={**_admin(), "Content-Type": "application/json"},
+        )
+        health = client.get("/health").json()
+    assert response.status_code == 400
+    assert response.json()["detail"] == "body must be JSON"
+    assert health["events"]["stored"] == 0
+    assert health["events"]["rejected_body"] == 1
+
+
+def test_same_id_from_another_source_is_not_a_duplicate(bridge_env):
+    with TestClient(main.app) as client:
+        first = client.post(
+            "/v1/events",
+            json=_fusion_event("shared-id", source="greatscale", kind="evidence", payload={"text": "gs"}),
+            headers=_admin(),
+        )
+        other = client.post(
+            "/v1/events",
+            json=_fusion_event("shared-id", source="avrone", payload={"text": "av"}),
+            headers=_admin(),
+        )
+        again = client.post(
+            "/v1/events",
+            json=_fusion_event("shared-id", source="avrone", payload={"text": "replaced"}),
+            headers=_admin(),
+        )
+        listed = client.get("/v1/events", headers=_admin()).json()
+    assert first.json() == {"accepted": True, "duplicate": False, "id": "shared-id"}
+    assert other.json() == {"accepted": True, "duplicate": False, "id": "shared-id"}
+    assert again.json()["duplicate"] is True
+    stored = {(event["source"], event["payload"]["text"]) for event in listed["events"]}
+    assert stored == {("greatscale", "gs"), ("avrone", "av")}
+    assert listed["stored"] == 2
+    assert listed["accepted"] == 2
+
+
+def test_version1_store_loads_and_does_not_collapse_sources(bridge_env):
+    path = main.events_path()
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "events": [
+                    {
+                        "id": "shared-id",
+                        "source": "greatscale",
+                        "kind": "evidence",
+                        "run_id": "run-1",
+                        "payload": {"text": "gs"},
+                        "ts": 1700000000.0,
+                    }
+                ],
+                "tombstones": ["old-id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    main.reset_runtime_state()
+    with TestClient(main.app) as client:
+        replay = client.post(
+            "/v1/events",
+            json=_fusion_event("shared-id", source="greatscale", kind="evidence"),
+            headers=_admin(),
+        )
+        other = client.post(
+            "/v1/events",
+            json=_fusion_event("shared-id", source="avrone", payload={"text": "av"}),
+            headers=_admin(),
+        )
+        legacy = client.post("/v1/events", json=_fusion_event("old-id", source="avrone"), headers=_admin())
+        listed = client.get("/v1/events", headers=_admin()).json()
+    assert replay.json()["duplicate"] is True
+    assert other.json()["duplicate"] is False
+    assert legacy.json()["duplicate"] is False
+    sources = {event["source"] for event in listed["events"] if event["id"] == "shared-id"}
+    assert sources == {"greatscale", "avrone"}
+
+
 def test_boot_id_is_stable_for_the_process_lifetime(bridge_env):
     with TestClient(main.app) as client:
         first = client.get("/health").json()["boot"]

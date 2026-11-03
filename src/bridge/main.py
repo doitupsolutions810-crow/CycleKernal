@@ -42,7 +42,8 @@ logger = logging.getLogger("cognitive-bridge")
 VERSION = "3.3.0"
 FUSION_MAX_BODY_BYTES = 4096
 DEFAULT_EVENTS_PATH = "/var/lib/cyclekernel/events.json"
-STORE_VERSION = 1
+STORE_VERSION = 2
+LEGACY_STORE_VERSION = 1
 # New value in each process. The Fusion Bridge treats a change as a peer restart.
 BOOT_ID = secrets.token_hex(16)
 _EVENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
@@ -331,8 +332,8 @@ class EventLog:
         self.rejected_auth = 0
         self.rejected_size = 0
         self.rejected_body = 0
-        self.by_id: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-        self.tombstones: OrderedDict[str, None] = OrderedDict()
+        self.by_id: OrderedDict[tuple[str, str], Dict[str, Any]] = OrderedDict()
+        self.tombstones: OrderedDict[tuple[str, str], None] = OrderedDict()
         self.durable_error: str | None = None
         self.path = ""
 
@@ -575,16 +576,39 @@ async def subscribe_to_relay() -> None:
         await _relay_loop()
 
 
-def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[str]]:
+def _dedup_key(source: str, eid: str) -> tuple[str, str]:
+    return (source, eid)
+
+
+def _parse_tombstone(item: Any) -> tuple[str, str]:
+    """Version 2 tombstones are {source, id}. Version 1 stored a bare id.
+
+    A bare id has no source, so it is kept as a legacy marker and does not
+    collide with a real (source, id) pair.
+    """
+    if isinstance(item, str):
+        if not _EVENT_ID_RE.match(item):
+            raise ValueError("tombstone id is invalid")
+        return ("", item)
+    if isinstance(item, dict):
+        source = item.get("source")
+        eid = item.get("id")
+        if source not in EVENT_SOURCES or not isinstance(eid, str) or not _EVENT_ID_RE.match(eid):
+            raise ValueError("tombstone is invalid")
+        return (source, eid)
+    raise ValueError("tombstone is invalid")
+
+
+def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[tuple[str, str]]]:
     if not isinstance(data, dict):
         raise ValueError("store must be an object")
-    if data.get("version") != STORE_VERSION:
+    if data.get("version") not in (LEGACY_STORE_VERSION, STORE_VERSION):
         raise ValueError("unsupported store version")
     events = data.get("events")
     tombstones = data.get("tombstones")
     if not isinstance(events, list) or not isinstance(tombstones, list):
         raise ValueError("events and tombstones must be lists")
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     cleaned: list[Dict[str, Any]] = []
     for event in events:
         if not isinstance(event, dict):
@@ -592,8 +616,6 @@ def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[str]]:
         eid = event.get("id")
         if not isinstance(eid, str) or not _EVENT_ID_RE.match(eid):
             raise ValueError("event id is invalid")
-        if eid in seen:
-            raise ValueError("duplicate id in store")
         for field in ("source", "kind", "run_id", "payload", "ts"):
             if field not in event:
                 raise ValueError(f"event missing {field}")
@@ -604,7 +626,10 @@ def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[str]]:
         ts = event["ts"]
         if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(float(ts)):
             raise ValueError("event ts is invalid")
-        seen.add(eid)
+        key = _dedup_key(event["source"], eid)
+        if key in seen:
+            raise ValueError("duplicate id in store")
+        seen.add(key)
         cleaned.append(
             {
                 "id": eid,
@@ -615,13 +640,13 @@ def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[str]]:
                 "ts": float(ts),
             }
         )
-    tombs: list[str] = []
-    for tid in tombstones:
-        if not isinstance(tid, str) or not _EVENT_ID_RE.match(tid):
-            raise ValueError("tombstone id is invalid")
-        if tid in seen or tid in tombs:
+    tombs: list[tuple[str, str]] = []
+    for item in tombstones:
+        key = _parse_tombstone(item)
+        if key in seen or key in tombs:
             raise ValueError("tombstone conflicts with a stored id")
-        tombs.append(tid)
+        tombs.append(key)
+        seen.add(key)
     return cleaned, tombs
 
 
@@ -650,9 +675,9 @@ def load_event_store() -> None:
         event_log.accepted = 0
         return
     for event in events:
-        event_log.by_id[event["id"]] = event
-    for tid in tombs:
-        event_log.tombstones[tid] = None
+        event_log.by_id[_dedup_key(event["source"], event["id"])] = event
+    for key in tombs:
+        event_log.tombstones[key] = None
     event_log.accepted = len(event_log.by_id) + len(event_log.tombstones)
 
 
@@ -661,7 +686,7 @@ def _persist_state(events: OrderedDict, tombstones: OrderedDict) -> None:
     payload = {
         "version": STORE_VERSION,
         "events": list(events.values()),
-        "tombstones": list(tombstones.keys()),
+        "tombstones": [{"source": source, "id": eid} for source, eid in tombstones if source],
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -768,24 +793,25 @@ def _too_large(max_bytes: int) -> JSONResponse:
 
 
 def _store_event(event: Dict[str, Any]) -> bool:
-    """Return True when the id was already seen. Do not overwrite or re-append.
+    """Return True when this source already sent this id. Do not overwrite.
 
+    Dedup is (source, id). The same id from another source is a different event.
     The durable file is replaced before memory changes. A failed write leaves
     the previous log in place and raises StoreError so the caller does not ack.
     """
     if event_log.durable_error:
         raise StoreError("event store corrupt")
-    eid = event["id"]
-    if eid in event_log.by_id or eid in event_log.tombstones:
+    key = _dedup_key(event["source"], event["id"])
+    if key in event_log.by_id or key in event_log.tombstones:
         return True
-    new_events: OrderedDict[str, Dict[str, Any]] = OrderedDict(event_log.by_id)
-    new_events[eid] = event
-    new_tombs: OrderedDict[str, None] = OrderedDict(event_log.tombstones)
+    new_events: OrderedDict[tuple[str, str], Dict[str, Any]] = OrderedDict(event_log.by_id)
+    new_events[key] = event
+    new_tombs: OrderedDict[tuple[str, str], None] = OrderedDict(event_log.tombstones)
     cap = events_max_recent()
     seen_cap = max(cap * 10, 1000)
     while len(new_events) > cap:
-        old, _ = new_events.popitem(last=False)
-        new_tombs[old] = None
+        old_key, _ = new_events.popitem(last=False)
+        new_tombs[old_key] = None
         while len(new_tombs) > seen_cap:
             new_tombs.popitem(last=False)
     try:
@@ -827,7 +853,7 @@ async def post_event(request: Request):
         return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
     try:
         payload = json.loads(body)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         _reject_event("body")
         return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
     event, detail = normalize_event(payload)
