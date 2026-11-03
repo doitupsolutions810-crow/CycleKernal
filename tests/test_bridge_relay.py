@@ -59,6 +59,7 @@ class ScriptedRelay:
             "127.0.0.1",
             0,
             ping_interval=None,
+            compression=None,
         )
         self.port = self.server.sockets[0].getsockname()[1]
         self.started.set()
@@ -388,3 +389,214 @@ async def test_concurrent_event_posts(bridge_env, monkeypatch):
     assert health.json()["events"]["accepted"] == count
     assert health.json()["events"]["stored"] == count
     assert health.json()["events"]["rejected"] == 0
+
+
+def _metrics_frame(size: int, core: float) -> str:
+    prefix = f'{{"Core":{core:.2f},"pad":"'
+    suffix = '"}'
+    filler = size - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
+    if filler < 0:
+        raise ValueError(f"size {size} is smaller than the metric envelope")
+    return prefix + ("x" * filler) + suffix
+
+
+def test_relay_flapping_resets_backoff_and_keeps_latest_mood(bridge_env, monkeypatch):
+    first = map_metrics_to_traits(SURVIVAL).mood
+    second = map_metrics_to_traits(DIVERGENT).mood
+    assert first != second
+    seen = {"n": 0}
+
+    async def handler(ws):
+        n = seen["n"]
+        seen["n"] += 1
+        if n < 4:
+            await ws.send(json.dumps(SURVIVAL))
+            await ws.close()
+            return
+        await ws.send(json.dumps(DIVERGENT))
+        try:
+            await ws.recv()
+        except Exception:
+            return
+
+    monkeypatch.setenv("CK_RELAY_BACKOFF_INITIAL", "0.05")
+    monkeypatch.setenv("CK_RELAY_BACKOFF_FACTOR", "2")
+    monkeypatch.setenv("CK_RELAY_BACKOFF_MAX", "1")
+    with ScriptedRelay(handler) as relay:
+        monkeypatch.setenv("WS_RELAY_URL", relay.url)
+        main.reset_runtime_state()
+        with TestClient(main.app) as client:
+            def settled():
+                health = client.get("/health").json()
+                with main._relay_guard:
+                    trace = list(main.relay_status.backoff_trace)
+                return (
+                    health["mood"] == second
+                    and health["relay"]["connected"] is True
+                    and health["relay"]["attempts"] >= 5
+                    and len(trace) >= 4
+                )
+
+            _wait_until(settled)
+            with main._relay_guard:
+                trace = list(main.relay_status.backoff_trace)
+
+    initial, factor, maximum = main.backoff_params()
+    fresh = main.next_backoff(None, initial=initial, factor=factor, maximum=maximum)
+    # Each successful handshake resets the curve, so flaps do not climb to the cap.
+    assert trace[:4] == [fresh, fresh, fresh, fresh]
+    assert seen["n"] >= 5
+
+
+def test_slow_hud_consumer_does_not_stall_mood(bridge_env, monkeypatch):
+    expected = map_metrics_to_traits(DIVERGENT).mood
+    monkeypatch.setenv("CK_HUD_SEND_TIMEOUT", "0.05")
+
+    class SlowSocket:
+        def __init__(self):
+            self.calls = 0
+            self.closed = False
+
+        async def send_json(self, payload):
+            self.calls += 1
+            await asyncio.sleep(5)
+
+        async def close(self):
+            self.closed = True
+
+    async def handler(ws):
+        await ws.send(json.dumps(SURVIVAL))
+        await asyncio.sleep(0.25)
+        await ws.send(json.dumps(DIVERGENT))
+        try:
+            await ws.recv()
+        except Exception:
+            return
+
+    with ScriptedRelay(handler) as relay:
+        monkeypatch.setenv("WS_RELAY_URL", relay.url)
+        main.reset_runtime_state()
+        with TestClient(main.app) as client:
+            def saw_first():
+                return client.get("/v1/current_mood").json()["mood"] == map_metrics_to_traits(SURVIVAL).mood
+
+            _wait_until(saw_first)
+            slow = SlowSocket()
+            main.ws_clients.append(slow)
+            started = time.monotonic()
+
+            def dropped_slow_client():
+                mood = client.get("/v1/current_mood").json()["mood"]
+                return mood == expected and slow not in main.ws_clients and slow.calls >= 1
+
+            _wait_until(dropped_slow_client)
+            elapsed = time.monotonic() - started
+
+    assert elapsed < 2
+    assert slow.closed is True
+
+
+def test_token_rotation_accepts_previous_until_cleared(bridge_env, monkeypatch):
+    monkeypatch.setenv("CK_EVENTS_TOKEN", "alpha")
+    monkeypatch.delenv("CK_EVENTS_TOKEN_PREVIOUS", raising=False)
+    with TestClient(main.app) as client:
+        assert client.post("/events", json={"n": 1}, headers=_auth("alpha")).status_code == 200
+        assert client.post("/events", json={"n": 1}, headers=_auth("beta")).status_code == 401
+        monkeypatch.setenv("CK_EVENTS_TOKEN", "beta")
+        monkeypatch.setenv("CK_EVENTS_TOKEN_PREVIOUS", "alpha")
+        assert client.post("/events", json={"n": 2}, headers=_auth("alpha")).status_code == 200
+        assert client.post("/events", json={"n": 3}, headers=_auth("beta")).status_code == 200
+        assert client.post("/events", json={"n": 4}, headers=_auth("gamma")).status_code == 401
+        monkeypatch.delenv("CK_EVENTS_TOKEN_PREVIOUS", raising=False)
+        retired = client.post("/events", json={"n": 5}, headers=_auth("alpha"))
+        current = client.post("/events", json={"n": 6}, headers=_auth("beta"))
+        health = client.get("/health").json()
+    assert retired.status_code == 401
+    assert current.status_code == 200
+    assert health["events"]["auth_configured"] is True
+    assert health["events"]["accepted"] == 4
+
+
+def test_frame_at_exact_size_cap_is_applied_and_one_over_reconnects(bridge_env, monkeypatch):
+    cap = 128
+    exact = _metrics_frame(cap, 0.05)
+    over = _metrics_frame(cap + 1, 0.55)
+    assert len(exact.encode("utf-8")) == cap
+    assert len(over.encode("utf-8")) == cap + 1
+    expected = map_metrics_to_traits({"Core": 0.05}).mood
+    other = map_metrics_to_traits({"Core": 0.55}).mood
+    assert expected != other
+    seen = {"n": 0}
+
+    async def handler(ws):
+        n = seen["n"]
+        seen["n"] += 1
+        if n == 0:
+            await ws.send(exact)
+            try:
+                await ws.send(over)
+            except Exception:
+                return
+        try:
+            await ws.recv()
+        except Exception:
+            return
+
+    monkeypatch.setenv("CK_RELAY_MAX_FRAME_BYTES", str(cap))
+    monkeypatch.setenv("CK_RELAY_BACKOFF_INITIAL", "0.05")
+    with ScriptedRelay(handler) as relay:
+        monkeypatch.setenv("WS_RELAY_URL", relay.url)
+        main.reset_runtime_state()
+        with TestClient(main.app) as client:
+            def dropped_oversize():
+                health = client.get("/health").json()
+                # A successful reconnect clears last_error, so the durable signal
+                # is a second attempt that did not apply the oversized frame.
+                return (
+                    health["mood"] == expected
+                    and health["relay"]["frames_accepted"] == 1
+                    and health["relay"]["attempts"] >= 2
+                )
+
+            _wait_until(dropped_oversize)
+            health = client.get("/health").json()
+
+    assert health["mood"] == expected
+    assert health["relay"]["frames_accepted"] == 1
+
+
+def test_event_ring_drops_oldest_when_full(bridge_env, monkeypatch):
+    monkeypatch.setenv("CK_EVENTS_MAX_RECENT", "3")
+    with TestClient(main.app) as client:
+        for i in range(5):
+            response = client.post("/events", json={"i": i}, headers=_auth())
+            assert response.status_code == 200
+        stored = client.get("/events", headers=_auth()).json()
+        health = client.get("/health").json()
+    assert [event["payload"]["i"] for event in stored["events"]] == [2, 3, 4]
+    assert stored["accepted"] == 5
+    assert stored["stored"] == 3
+    assert health["events"]["accepted"] == 5
+    assert health["events"]["stored"] == 3
+
+
+def test_master_tree_loads_canonical_bridge():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "master" / "src" / "bridge" / "main.py"
+    spec = importlib.util.spec_from_file_location("master_bridge_shim", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    paths = {getattr(route, "path", None) for route in module.app.routes}
+    assert {"/events", "/health", "/v1/current_mood", "/v1/feedback", "/ws/hud"} <= paths
+
+
+def test_feedback_endpoint_accepts_orchestrator_payload(bridge_env):
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/feedback",
+            json={"goal": "ship", "success": True, "stages": ["research"], "mood_at_start": "neutral"},
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ingested"

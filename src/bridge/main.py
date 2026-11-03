@@ -35,7 +35,7 @@ from traits import CognitiveState, map_metrics_to_traits
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cognitive-bridge")
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 DEFAULT_RELAY_URL = "ws://ws-relay:8081/ws/out"
 METRIC_KEYS = (
     "Core",
@@ -146,8 +146,27 @@ def _max_frame_bytes() -> int:
     return max(1, _int_env("CK_RELAY_MAX_FRAME_BYTES", 65536))
 
 
+def _hud_send_timeout() -> float:
+    return max(0.01, _float_env("CK_HUD_SEND_TIMEOUT", 0.5))
+
+
+def _clean_token(raw: str | None) -> str:
+    return (raw or "").strip()
+
+
+def accepted_tokens() -> list[str]:
+    """Current token, plus the previous one during a rotation overlap."""
+    found: list[str] = []
+    for name in ("CK_EVENTS_TOKEN", "CK_EVENTS_TOKEN_PREVIOUS"):
+        token = _clean_token(os.environ.get(name))
+        if token and token not in found:
+            found.append(token)
+    return found
+
+
 def events_token() -> str:
-    return os.environ.get("CK_EVENTS_TOKEN", "")
+    tokens = accepted_tokens()
+    return tokens[0] if tokens else ""
 
 
 def events_max_bytes() -> int:
@@ -237,7 +256,7 @@ class EventLog:
             "rejected_size": self.rejected_size,
             "rejected_body": self.rejected_body,
             "stored": len(self.recent),
-            "auth_configured": bool(events_token()),
+            "auth_configured": bool(accepted_tokens()),
         }
 
 
@@ -297,11 +316,16 @@ def _presented_token(request: Request) -> str:
 
 
 def _authorized(request: Request) -> bool:
-    expected = events_token()
     supplied = _presented_token(request)
-    if not expected or not supplied:
+    tokens = accepted_tokens()
+    if not supplied or not tokens:
         return False
-    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+    supplied_b = supplied.encode("utf-8")
+    ok = False
+    for token in tokens:
+        # Compare every configured token so a rotation doesn't leak which one matched.
+        ok = hmac.compare_digest(supplied_b, token.encode("utf-8")) or ok
+    return ok
 
 
 async def _read_capped(request: Request, max_bytes: int) -> bytes:
@@ -321,6 +345,27 @@ async def _read_capped(request: Request, max_bytes: int) -> bytes:
     return bytes(buf)
 
 
+async def _push_hud(payload: Dict[str, Any]) -> None:
+    """Push state to HUD sockets. A slow client is dropped instead of stalling intake."""
+    timeout = _hud_send_timeout()
+    stale = []
+    for ws in ws_clients[:]:
+        try:
+            await asyncio.wait_for(ws.send_json(payload), timeout=timeout)
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        if ws in ws_clients:
+            ws_clients.remove(ws)
+        close = getattr(ws, "close", None)
+        if close is None:
+            continue
+        with contextlib.suppress(Exception):
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
+
+
 async def sync_state(metrics: Dict):
     """
     The Ghost Function: maps simulation metrics to cognitive traits.
@@ -331,12 +376,7 @@ async def sync_state(metrics: Dict):
     global current_state
     current_state = map_metrics_to_traits(metrics)
     logger.info("Ghost state updated: %s | traits=%s", current_state.mood, current_state.traits)
-    for ws in ws_clients[:]:
-        try:
-            await ws.send_json(current_state.to_dict())
-        except Exception:
-            if ws in ws_clients:
-                ws_clients.remove(ws)
+    await _push_hud(current_state.to_dict())
 
 
 async def _handle_frame(raw: Any) -> None:
@@ -384,6 +424,7 @@ async def _relay_loop() -> None:
                 open_timeout=_open_timeout(),
                 close_timeout=2,
                 max_size=_max_frame_bytes(),
+                compression=None,
                 proxy=os.environ.get("CK_RELAY_PROXY") or None,
                 ping_interval=_float_env("CK_RELAY_PING_INTERVAL", 20.0) or None,
             ) as ws:
@@ -468,6 +509,13 @@ app.add_middleware(
 async def get_current_mood():
     """Polled by Chat Interface to dynamically update System Prompt."""
     return current_state.to_dict()
+
+
+@app.post("/v1/feedback")
+async def ingest_feedback(payload: Dict[str, Any]):
+    """Closed-loop entry point: conversation outcomes feed back into LoopMem."""
+    logger.info("Feedback received: %s", payload)
+    return {"status": "ingested", "timestamp": _now()}
 
 
 @app.get("/health")

@@ -1,17 +1,46 @@
 version: "3.9"
 
 services:
+  ws-relay:
+    build:
+      context: ../src/relay
+      dockerfile: Dockerfile
+    container_name: ck-ws-relay
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      - CK_RELAY_QUEUE_MAX=${CK_RELAY_QUEUE_MAX:-32}
+    networks: [cyclekernel-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   cognitive-bridge:
     build:
-      context: ./src/bridge
+      context: ../src/bridge
       dockerfile: Dockerfile
     container_name: ck-cognitive-bridge
     ports:
       - "8090:8090"
+    environment:
+      # master/.env.example lists these. An empty token keeps /events closed.
+      - WS_RELAY_URL=${WS_RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - RELAY_URL=${RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - CK_SYNTHETIC=${CK_SYNTHETIC:-0}
+      - CK_EVENTS_TOKEN=${CK_EVENTS_TOKEN:-}
+      - CK_EVENTS_TOKEN_PREVIOUS=${CK_EVENTS_TOKEN_PREVIOUS:-}
+      - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-65536}
+      - CK_EVENTS_MAX_RECENT=${CK_EVENTS_MAX_RECENT:-100}
+    depends_on:
+      ws-relay:
+        condition: service_healthy
     networks: [cyclekernel-net]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
