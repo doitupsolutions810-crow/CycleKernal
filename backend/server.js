@@ -28,6 +28,10 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// Operator-only protection for chat/simulation/analytics; no implicit loopback bypass.
+const { privateApiGuard } = require('./private_api_auth');
+app.use('/api', privateApiGuard);
+
 // Prometheus metrics setup
 const register = new promClient.Registry();
 promClient.collectDefaultMetrics({ register });
