@@ -17,17 +17,19 @@ The old fixed sample heartbeat runs only when `CK_SYNTHETIC=1`. `GET /health` re
 | `CK_RELAY_OPEN_TIMEOUT` | `5` | Handshake timeout, seconds |
 | `CK_RELAY_MAX_FRAME_BYTES` | `65536` | Largest accepted relay frame. Exactly this size is accepted; one byte over closes the socket |
 | `CK_HUD_SEND_TIMEOUT` | `0.5` | Seconds before a slow HUD client is dropped |
-| `CK_EVENTS_TOKEN` | unset | Bearer token for `/events`. Unset rejects every post. Copy `.env.example` |
-| `CK_EVENTS_TOKEN_PREVIOUS` | unset | Still accepted while `CK_EVENTS_TOKEN` is rotated |
-| `CK_EVENTS_MAX_BYTES` | `65536` | Maximum `POST /events` body |
-| `CK_EVENTS_MAX_RECENT` | `100` | In-memory ring size. Older events are dropped |
+| `CK_FUSION_TOKEN` | unset | Contract token for `POST /v1/events`. When set, `FUSION_TOKEN` is not accepted |
+| `FUSION_TOKEN` | unset | Accepted only when `CK_FUSION_TOKEN` is unset |
+| `CK_EVENTS_TOKEN` | unset | Also accepted. Bearer, `X-Admin-Token`, or `X-Events-Token`. Copy `.env.example` |
+| `CK_EVENTS_TOKEN_PREVIOUS` | unset | Still accepted while the current token is rotated |
+| `CK_EVENTS_MAX_BYTES` | `4096` | Body cap. Values above 4096 are clamped. Checked before auth |
+| `CK_EVENTS_MAX_RECENT` | `100` | Visible ring. Evicted ids still answer `duplicate: true` |
 
 ## HTTP
 
 - `GET /health` — liveness plus mode, relay counters, and event counts
 - `GET /v1/current_mood` — latest cognitive state
-- `POST /events` — Fusion Bridge intake. `Authorization: Bearer <CK_EVENTS_TOKEN>` or `X-Events-Token`. The previous token is accepted until it is cleared
-- `GET /events` — same credentials, returns the ring buffer
+- `POST /v1/events` — Fusion Bridge intake. `POST /events` is the same handler. Send `X-Admin-Token` or `Authorization: Bearer`. A body over 4096 bytes is 413 before the token is checked. The same id returns `{"accepted": true, "duplicate": true, "id": "..."}` and is not stored again
+- `GET /v1/events` — same credentials, debug read of the ring. `GET /events` is the alias
 - `POST /v1/feedback` — orchestrator closed loop. Not the events intake
 - `WS /ws/hud` — pushes the cognitive state to HUD clients. A client that does not read within `CK_HUD_SEND_TIMEOUT` is disconnected
 

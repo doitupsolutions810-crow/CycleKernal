@@ -30,9 +30,11 @@ services:
       - WS_RELAY_URL=${WS_RELAY_URL:-ws://ws-relay:8081/ws/out}
       - RELAY_URL=${RELAY_URL:-ws://ws-relay:8081/ws/out}
       - CK_SYNTHETIC=${CK_SYNTHETIC:-0}
+      - CK_FUSION_TOKEN=${CK_FUSION_TOKEN:-}
+      - FUSION_TOKEN=${FUSION_TOKEN:-}
       - CK_EVENTS_TOKEN=${CK_EVENTS_TOKEN:-}
       - CK_EVENTS_TOKEN_PREVIOUS=${CK_EVENTS_TOKEN_PREVIOUS:-}
-      - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-65536}
+      - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-4096}
       - CK_EVENTS_MAX_RECENT=${CK_EVENTS_MAX_RECENT:-100}
     depends_on:
       ws-relay:

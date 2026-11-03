@@ -4,8 +4,9 @@ The biological link between LoopMem heartbeat and LLM Agent consciousness.
 Ingests real-time simulation metrics via WS Relay and maps to Evo-Psych traits.
 
 Relay mode connects to WS_RELAY_URL (fallback RELAY_URL). The fixed sample
-heartbeat runs only when CK_SYNTHETIC=1. POST /events accepts authenticated,
-size-capped JSON objects from the Fusion Bridge.
+heartbeat runs only when CK_SYNTHETIC=1. POST /v1/events (alias POST /events)
+accepts Fusion Bridge events: X-Admin-Token or Bearer, 4096-byte cap before
+auth, and duplicate: true for an id already seen.
 """
 
 from __future__ import annotations
@@ -17,9 +18,10 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
-from collections import deque
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
@@ -36,6 +38,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cognitive-bridge")
 
 VERSION = "3.3.0"
+FUSION_MAX_BODY_BYTES = 4096
+_EVENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+EVENT_SOURCES = ("avrone", "cyclekernal", "greatscale")
+EVENT_KINDS = (
+    "finding",
+    "question",
+    "answer",
+    "correction",
+    "conclusion",
+    "mood",
+    "evidence",
+    "health",
+)
 DEFAULT_RELAY_URL = "ws://ws-relay:8081/ws/out"
 METRIC_KEYS = (
     "Core",
@@ -155,9 +170,17 @@ def _clean_token(raw: str | None) -> str:
 
 
 def accepted_tokens() -> list[str]:
-    """Current token, plus the previous one during a rotation overlap."""
+    """Secrets that may call POST /v1/events.
+
+    CK_FUSION_TOKEN is the contract name and wins over FUSION_TOKEN.
+    CK_EVENTS_TOKEN and CK_EVENTS_TOKEN_PREVIOUS stay valid so compose and
+    rotation keep working beside the fusion header.
+    """
     found: list[str] = []
-    for name in ("CK_EVENTS_TOKEN", "CK_EVENTS_TOKEN_PREVIOUS"):
+    names = ["CK_FUSION_TOKEN", "CK_EVENTS_TOKEN", "CK_EVENTS_TOKEN_PREVIOUS"]
+    if not _clean_token(os.environ.get("CK_FUSION_TOKEN")):
+        names.append("FUSION_TOKEN")
+    for name in names:
         token = _clean_token(os.environ.get(name))
         if token and token not in found:
             found.append(token)
@@ -170,7 +193,9 @@ def events_token() -> str:
 
 
 def events_max_bytes() -> int:
-    return max(1, _int_env("CK_EVENTS_MAX_BYTES", 65536))
+    """Fusion body cap. Never above 4096; CK_EVENTS_MAX_BYTES may only tighten it."""
+    configured = _int_env("CK_EVENTS_MAX_BYTES", FUSION_MAX_BODY_BYTES)
+    return max(1, min(FUSION_MAX_BODY_BYTES, configured))
 
 
 def events_max_recent() -> int:
@@ -238,6 +263,44 @@ class RelayStatus:
         }
 
 
+def _finite_ts(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return time.time()
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return time.time()
+    return number
+
+
+def normalize_event(data: Any) -> tuple[Dict[str, Any] | None, str | None]:
+    """Validate a POST /v1/events body. Returns (event, None) or (None, detail)."""
+    if not isinstance(data, dict):
+        return None, "body must be a JSON object"
+    for field in ("id", "source", "kind", "run_id"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return None, f"{field} is required"
+    if not _EVENT_ID_RE.match(data["id"]):
+        return None, "bad event id"
+    if data["source"] not in EVENT_SOURCES:
+        return None, "source must be one of " + ", ".join(EVENT_SOURCES)
+    if data["kind"] not in EVENT_KINDS:
+        return None, "kind must be one of " + ", ".join(EVENT_KINDS)
+    if "payload" not in data:
+        return None, "payload is required"
+    if not isinstance(data["payload"], dict):
+        return None, "payload must be a JSON object"
+    event = {
+        "id": data["id"],
+        "source": data["source"],
+        "kind": data["kind"],
+        "run_id": data["run_id"][:80],
+        "payload": data["payload"],
+        "ts": _finite_ts(data.get("ts")),
+    }
+    return event, None
+
+
 class EventLog:
     def __init__(self) -> None:
         self.accepted = 0
@@ -245,8 +308,8 @@ class EventLog:
         self.rejected_auth = 0
         self.rejected_size = 0
         self.rejected_body = 0
-        self.seq = 0
-        self.recent: deque = deque()
+        self.by_id: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self.tombstones: OrderedDict[str, None] = OrderedDict()
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -255,7 +318,7 @@ class EventLog:
             "rejected_auth": self.rejected_auth,
             "rejected_size": self.rejected_size,
             "rejected_body": self.rejected_body,
-            "stored": len(self.recent),
+            "stored": len(self.by_id),
             "auth_configured": bool(accepted_tokens()),
         }
 
@@ -290,8 +353,8 @@ def reset_runtime_state() -> None:
         event_log.rejected_auth = 0
         event_log.rejected_size = 0
         event_log.rejected_body = 0
-        event_log.seq = 0
-        event_log.recent.clear()
+        event_log.by_id.clear()
+        event_log.tombstones.clear()
 
 
 def _reject_event(reason: str) -> None:
@@ -306,6 +369,9 @@ def _reject_event(reason: str) -> None:
 
 
 def _presented_token(request: Request) -> str:
+    admin = request.headers.get("x-admin-token", "").strip()
+    if admin:
+        return admin
     authorization = request.headers.get("authorization", "")
     if authorization:
         scheme, _, rest = authorization.partition(" ")
@@ -536,75 +602,92 @@ async def health():
     }
 
 
+def _events_auth_failure() -> JSONResponse:
+    _reject_event("auth")
+    if not accepted_tokens():
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Admin access is off. Set CK_FUSION_TOKEN or CK_EVENTS_TOKEN to enable it."},
+        )
+    return JSONResponse(status_code=401, content={"detail": "Bad admin token"})
+
+
+def _too_large(max_bytes: int) -> JSONResponse:
+    _reject_event("size")
+    return JSONResponse(
+        status_code=413,
+        content={"detail": f"request body too large (max {max_bytes} bytes)"},
+        headers={"Connection": "close"},
+    )
+
+
+def _store_event(event: Dict[str, Any]) -> bool:
+    """Return True when the id was already seen. Do not overwrite or re-append."""
+    eid = event["id"]
+    if eid in event_log.by_id or eid in event_log.tombstones:
+        return True
+    event_log.by_id[eid] = event
+    cap = events_max_recent()
+    while len(event_log.by_id) > cap:
+        old, _ = event_log.by_id.popitem(last=False)
+        event_log.tombstones[old] = None
+        seen_cap = max(cap * 10, 1000)
+        while len(event_log.tombstones) > seen_cap:
+            event_log.tombstones.popitem(last=False)
+    event_log.accepted += 1
+    return False
+
+
+@app.post("/v1/events")
 @app.post("/events")
 async def post_event(request: Request):
-    """Authenticated intake for Fusion Bridge events. Recent events are kept in memory."""
+    """Fusion Bridge intake. /events is the same handler as /v1/events."""
     max_bytes = events_max_bytes()
     declared = request.headers.get("content-length")
     if declared is not None:
         try:
             declared_len = int(declared)
         except ValueError:
-            declared_len = -1
+            _reject_event("body")
+            return JSONResponse(status_code=400, content={"detail": "bad content-length"})
         if declared_len > max_bytes:
-            _reject_event("size")
-            return JSONResponse(
-                status_code=413,
-                content={"error": "payload too large", "max_bytes": max_bytes},
-            )
-    if not _authorized(request):
-        _reject_event("auth")
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+            return _too_large(max_bytes)
     try:
         body = await _read_capped(request, max_bytes)
     except FrameError as exc:
-        reason = "size" if "large" in str(exc) else "body"
-        _reject_event(reason)
-        if reason == "size":
-            return JSONResponse(
-                status_code=413,
-                content={"error": "payload too large", "max_bytes": max_bytes},
-            )
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+        if "large" in str(exc):
+            return _too_large(max_bytes)
+        _reject_event("body")
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if not _authorized(request):
+        return _events_auth_failure()
     if not body:
         _reject_event("body")
-        return JSONResponse(status_code=400, content={"error": "empty body"})
+        return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
         _reject_event("body")
-        return JSONResponse(status_code=400, content={"error": "malformed json"})
-    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
+    event, detail = normalize_event(payload)
+    if detail or event is None:
         _reject_event("body")
-        return JSONResponse(status_code=400, content={"error": "event must be a JSON object"})
+        return JSONResponse(status_code=400, content={"detail": detail or "body must be a JSON object"})
     with _events_guard:
-        event_log.seq += 1
-        event = {
-            "seq": event_log.seq,
-            "received_at": _now(),
-            "bytes": len(body),
-            "payload": payload,
-        }
-        event_log.recent.append(event)
-        cap = events_max_recent()
-        while len(event_log.recent) > cap:
-            event_log.recent.popleft()
-        event_log.accepted += 1
-        accepted = event_log.accepted
-        stored = len(event_log.recent)
-    return {"status": "stored", "accepted": accepted, "stored": stored, "seq": event["seq"]}
+        duplicate = _store_event(event)
+    return {"accepted": True, "duplicate": duplicate, "id": event["id"]}
 
 
+@app.get("/v1/events")
 @app.get("/events")
 async def get_events(request: Request):
     if not _authorized(request):
-        _reject_event("auth")
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+        return _events_auth_failure()
     with _events_guard:
         return {
-            "events": list(event_log.recent),
+            "events": list(event_log.by_id.values()),
             "accepted": event_log.accepted,
-            "stored": len(event_log.recent),
+            "stored": len(event_log.by_id),
         }
 
 

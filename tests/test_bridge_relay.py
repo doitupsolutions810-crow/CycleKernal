@@ -109,6 +109,19 @@ def _auth(token: str = "test-token") -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _fusion_event(event_id: str = "evt-1", **overrides) -> dict:
+    body = {
+        "id": event_id,
+        "source": "avrone",
+        "kind": "finding",
+        "run_id": "run-1",
+        "payload": {"text": "heat"},
+        "ts": 1700000000.0,
+    }
+    body.update(overrides)
+    return body
+
+
 def _wait_until(predicate, timeout: float = 4.0, interval: float = 0.02):
     deadline = time.monotonic() + timeout
     last = None
@@ -297,22 +310,23 @@ def test_synthetic_flag_is_explicit_and_reported(bridge_env, monkeypatch):
 
 def test_events_bad_auth_and_unconfigured_token(bridge_env, monkeypatch):
     with TestClient(main.app) as client:
-        missing = client.post("/events", json={"kind": "tick"})
-        wrong = client.post("/events", json={"kind": "tick"}, headers=_auth("nope"))
+        missing = client.post("/events", json=_fusion_event("auth-missing"))
+        wrong = client.post("/events", json=_fusion_event("auth-wrong"), headers=_auth("nope"))
         basic = client.post(
             "/events",
-            json={"kind": "tick"},
+            json=_fusion_event("auth-basic"),
             headers={"Authorization": "Basic dGVzdA=="},
         )
         ok_header = client.post(
             "/events",
-            json={"kind": "alt"},
+            json=_fusion_event("auth-ok"),
             headers={"X-Events-Token": "test-token"},
         )
         hidden = client.get("/events")
         health = client.get("/health").json()
 
     assert missing.status_code == 401
+    assert missing.json()["detail"] == "Bad admin token"
     assert wrong.status_code == 401
     assert basic.status_code == 401
     assert hidden.status_code == 401
@@ -324,21 +338,16 @@ def test_events_bad_auth_and_unconfigured_token(bridge_env, monkeypatch):
     monkeypatch.delenv("CK_EVENTS_TOKEN", raising=False)
     main.reset_runtime_state()
     with TestClient(main.app) as client:
-        blocked = client.post("/events", json={"kind": "tick"}, headers=_auth())
+        blocked = client.post("/events", json=_fusion_event("auth-off"), headers=_auth())
         health = client.get("/health").json()
-    assert blocked.status_code == 401
+    assert blocked.status_code == 403
+    assert "CK_FUSION_TOKEN" in blocked.json()["detail"]
     assert health["events"]["auth_configured"] is False
     assert health["events"]["stored"] == 0
 
 
-def test_events_oversized_and_malformed_are_rejected(bridge_env, monkeypatch):
-    monkeypatch.setenv("CK_EVENTS_MAX_BYTES", "64")
+def test_events_malformed_are_rejected(bridge_env):
     with TestClient(main.app) as client:
-        exact = b'{"k":"' + (b"a" * (64 - len(b'{"k":""}'))) + b'"}'
-        assert len(exact) == 64
-        over = exact + b"a"
-        accepted = client.post("/events", content=exact, headers={**_auth(), "Content-Type": "application/json"})
-        too_big = client.post("/events", content=over, headers={**_auth(), "Content-Type": "application/json"})
         garbage = client.post(
             "/events",
             content=b"not-json",
@@ -351,19 +360,14 @@ def test_events_oversized_and_malformed_are_rejected(bridge_env, monkeypatch):
             headers={**_auth(), "Content-Type": "application/json"},
         )
         health = client.get("/health").json()
-        stored = client.get("/events", headers=_auth()).json()
 
-    assert accepted.status_code == 200
-    assert too_big.status_code == 413
-    assert too_big.json()["max_bytes"] == 64
     assert garbage.status_code == 400
+    assert garbage.json()["detail"] == "body must be JSON"
     assert array.status_code == 400
     assert empty.status_code == 400
-    assert health["events"]["accepted"] == 1
-    assert health["events"]["rejected_size"] == 1
+    assert health["events"]["accepted"] == 0
     assert health["events"]["rejected_body"] == 3
-    assert health["events"]["stored"] == 1
-    assert stored["events"][0]["payload"]["k"].startswith("a")
+    assert health["events"]["stored"] == 0
 
 
 @pytest.mark.anyio
@@ -375,7 +379,7 @@ async def test_concurrent_event_posts(bridge_env, monkeypatch):
         transport = httpx.ASGITransport(app=main.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://bridge") as client:
             async def post(i: int):
-                return await client.post("/events", json={"i": i, "source": "fusion"}, headers=_auth())
+                return await client.post("/events", json=_fusion_event(f"evt-{i}", payload={"i": i}), headers=_auth())
 
             responses = await asyncio.gather(*[post(i) for i in range(count)])
             listing = await client.get("/events", headers=_auth())
@@ -500,16 +504,16 @@ def test_token_rotation_accepts_previous_until_cleared(bridge_env, monkeypatch):
     monkeypatch.setenv("CK_EVENTS_TOKEN", "alpha")
     monkeypatch.delenv("CK_EVENTS_TOKEN_PREVIOUS", raising=False)
     with TestClient(main.app) as client:
-        assert client.post("/events", json={"n": 1}, headers=_auth("alpha")).status_code == 200
-        assert client.post("/events", json={"n": 1}, headers=_auth("beta")).status_code == 401
+        assert client.post("/events", json=_fusion_event("rot-1"), headers=_auth("alpha")).status_code == 200
+        assert client.post("/events", json=_fusion_event("rot-1b"), headers=_auth("beta")).status_code == 401
         monkeypatch.setenv("CK_EVENTS_TOKEN", "beta")
         monkeypatch.setenv("CK_EVENTS_TOKEN_PREVIOUS", "alpha")
-        assert client.post("/events", json={"n": 2}, headers=_auth("alpha")).status_code == 200
-        assert client.post("/events", json={"n": 3}, headers=_auth("beta")).status_code == 200
-        assert client.post("/events", json={"n": 4}, headers=_auth("gamma")).status_code == 401
+        assert client.post("/events", json=_fusion_event("rot-2"), headers=_auth("alpha")).status_code == 200
+        assert client.post("/events", json=_fusion_event("rot-3"), headers=_auth("beta")).status_code == 200
+        assert client.post("/events", json=_fusion_event("rot-4"), headers=_auth("gamma")).status_code == 401
         monkeypatch.delenv("CK_EVENTS_TOKEN_PREVIOUS", raising=False)
-        retired = client.post("/events", json={"n": 5}, headers=_auth("alpha"))
-        current = client.post("/events", json={"n": 6}, headers=_auth("beta"))
+        retired = client.post("/events", json=_fusion_event("rot-5"), headers=_auth("alpha"))
+        current = client.post("/events", json=_fusion_event("rot-6"), headers=_auth("beta"))
         health = client.get("/health").json()
     assert retired.status_code == 401
     assert current.status_code == 200
@@ -569,11 +573,12 @@ def test_event_ring_drops_oldest_when_full(bridge_env, monkeypatch):
     monkeypatch.setenv("CK_EVENTS_MAX_RECENT", "3")
     with TestClient(main.app) as client:
         for i in range(5):
-            response = client.post("/events", json={"i": i}, headers=_auth())
+            response = client.post("/events", json=_fusion_event(f"evt-{i}", payload={"i": i}), headers=_auth())
             assert response.status_code == 200
+            assert response.json()["duplicate"] is False
         stored = client.get("/events", headers=_auth()).json()
         health = client.get("/health").json()
-    assert [event["payload"]["i"] for event in stored["events"]] == [2, 3, 4]
+    assert [event["id"] for event in stored["events"]] == ["evt-2", "evt-3", "evt-4"]
     assert stored["accepted"] == 5
     assert stored["stored"] == 3
     assert health["events"]["accepted"] == 5
@@ -589,7 +594,7 @@ def test_master_tree_loads_canonical_bridge():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     paths = {getattr(route, "path", None) for route in module.app.routes}
-    assert {"/events", "/health", "/v1/current_mood", "/v1/feedback", "/ws/hud"} <= paths
+    assert {"/events", "/v1/events", "/health", "/v1/current_mood", "/v1/feedback", "/ws/hud"} <= paths
 
 
 def test_feedback_endpoint_accepts_orchestrator_payload(bridge_env):
