@@ -37,9 +37,15 @@ services:
       - CK_EVENTS_TOKEN_PREVIOUS=${CK_EVENTS_TOKEN_PREVIOUS:-}
       - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-4096}
       - CK_EVENTS_MAX_RECENT=${CK_EVENTS_MAX_RECENT:-100}
+      - CK_EVENTS_PATH=${CK_EVENTS_PATH:-/var/lib/cyclekernel/events.json}
+    volumes:
+      - cyclekernel-events:/var/lib/cyclekernel
     restart: unless-stopped
 
 networks:
   cyclekernel-network:
     external: true
     name: cyclekernel-network
+
+volumes:
+  cyclekernel-events:

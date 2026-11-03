@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import tempfile
 import threading
 import time
 import urllib.request
@@ -113,6 +114,7 @@ def test_publish_reaches_bridge_mood(monkeypatch):
     monkeypatch.setenv("CK_RELAY_SEND_DELAY", "0")
     monkeypatch.delenv("RELAY_URL", raising=False)
     relay.hub.reset()
+    monkeypatch.setenv("CK_EVENTS_PATH", str(tempfile.mkdtemp(prefix="ck-events-") + "/events.json"))
     main.reset_runtime_state()
     port = _free_port()
     monkeypatch.setenv("WS_RELAY_URL", f"ws://127.0.0.1:{port}/ws/out")

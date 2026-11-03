@@ -22,6 +22,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
@@ -39,6 +40,8 @@ logger = logging.getLogger("cognitive-bridge")
 
 VERSION = "3.3.0"
 FUSION_MAX_BODY_BYTES = 4096
+DEFAULT_EVENTS_PATH = "/var/lib/cyclekernel/events.json"
+STORE_VERSION = 1
 _EVENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 EVENT_SOURCES = ("avrone", "cyclekernal", "greatscale")
 EVENT_KINDS = (
@@ -165,24 +168,30 @@ def _hud_send_timeout() -> float:
     return max(0.01, _float_env("CK_HUD_SEND_TIMEOUT", 0.5))
 
 
-def _clean_token(raw: str | None) -> str:
-    return (raw or "").strip()
+def _raw_token(name: str) -> str | None:
+    """Env value with no trimming. Unset and empty are absent; whitespace is a token."""
+    if name not in os.environ:
+        return None
+    token = os.environ[name]
+    if token == "":
+        return None
+    return token
 
 
 def accepted_tokens() -> list[str]:
     """Secrets that may call POST /v1/events.
 
-    CK_FUSION_TOKEN is the contract name and wins over FUSION_TOKEN.
-    CK_EVENTS_TOKEN and CK_EVENTS_TOKEN_PREVIOUS stay valid so compose and
-    rotation keep working beside the fusion header.
+    Compared exactly, including trailing whitespace. CK_FUSION_TOKEN is the
+    contract name and wins over FUSION_TOKEN. CK_EVENTS_TOKEN and
+    CK_EVENTS_TOKEN_PREVIOUS stay valid so compose and rotation keep working.
     """
     found: list[str] = []
     names = ["CK_FUSION_TOKEN", "CK_EVENTS_TOKEN", "CK_EVENTS_TOKEN_PREVIOUS"]
-    if not _clean_token(os.environ.get("CK_FUSION_TOKEN")):
+    if _raw_token("CK_FUSION_TOKEN") is None:
         names.append("FUSION_TOKEN")
     for name in names:
-        token = _clean_token(os.environ.get(name))
-        if token and token not in found:
+        token = _raw_token(name)
+        if token is not None and token not in found:
             found.append(token)
     return found
 
@@ -200,6 +209,11 @@ def events_max_bytes() -> int:
 
 def events_max_recent() -> int:
     return max(1, _int_env("CK_EVENTS_MAX_RECENT", 100))
+
+
+def events_path() -> Path:
+    raw = os.environ.get("CK_EVENTS_PATH", DEFAULT_EVENTS_PATH)
+    return Path(raw if raw else DEFAULT_EVENTS_PATH)
 
 
 def parse_metrics_frame(raw: Any) -> Dict[str, float]:
@@ -301,6 +315,12 @@ def normalize_event(data: Any) -> tuple[Dict[str, Any] | None, str | None]:
     return event, None
 
 
+class StoreError(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
 class EventLog:
     def __init__(self) -> None:
         self.accepted = 0
@@ -310,6 +330,8 @@ class EventLog:
         self.rejected_body = 0
         self.by_id: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.tombstones: OrderedDict[str, None] = OrderedDict()
+        self.durable_error: str | None = None
+        self.path = ""
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -320,6 +342,9 @@ class EventLog:
             "rejected_body": self.rejected_body,
             "stored": len(self.by_id),
             "auth_configured": bool(accepted_tokens()),
+            "durable": self.durable_error is None,
+            "durable_error": self.durable_error,
+            "path": self.path,
         }
 
 
@@ -355,6 +380,8 @@ def reset_runtime_state() -> None:
         event_log.rejected_body = 0
         event_log.by_id.clear()
         event_log.tombstones.clear()
+        event_log.durable_error = None
+        load_event_store()
 
 
 def _reject_event(reason: str) -> None:
@@ -368,17 +395,27 @@ def _reject_event(reason: str) -> None:
             event_log.rejected_body += 1
 
 
+def _header_exact(request: Request, name: str) -> str | None:
+    """Header value with no trimming. Missing header is None; present whitespace is kept."""
+    if name not in request.headers:
+        return None
+    return request.headers[name]
+
+
 def _presented_token(request: Request) -> str:
-    admin = request.headers.get("x-admin-token", "").strip()
-    if admin:
+    admin = _header_exact(request, "x-admin-token")
+    if admin is not None:
         return admin
-    authorization = request.headers.get("authorization", "")
-    if authorization:
-        scheme, _, rest = authorization.partition(" ")
-        if scheme.lower() != "bearer":
+    authorization = _header_exact(request, "authorization")
+    if authorization is not None:
+        scheme, sep, rest = authorization.partition(" ")
+        if scheme.lower() != "bearer" or sep != " ":
             return ""
-        return rest.strip()
-    return request.headers.get("x-events-token", "").strip()
+        return rest
+    events = _header_exact(request, "x-events-token")
+    if events is not None:
+        return events
+    return ""
 
 
 def _authorized(request: Request) -> bool:
@@ -535,8 +572,113 @@ async def subscribe_to_relay() -> None:
         await _relay_loop()
 
 
+def _validate_store(data: Any) -> tuple[list[Dict[str, Any]], list[str]]:
+    if not isinstance(data, dict):
+        raise ValueError("store must be an object")
+    if data.get("version") != STORE_VERSION:
+        raise ValueError("unsupported store version")
+    events = data.get("events")
+    tombstones = data.get("tombstones")
+    if not isinstance(events, list) or not isinstance(tombstones, list):
+        raise ValueError("events and tombstones must be lists")
+    seen: set[str] = set()
+    cleaned: list[Dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("event must be an object")
+        eid = event.get("id")
+        if not isinstance(eid, str) or not _EVENT_ID_RE.match(eid):
+            raise ValueError("event id is invalid")
+        if eid in seen:
+            raise ValueError("duplicate id in store")
+        for field in ("source", "kind", "run_id", "payload", "ts"):
+            if field not in event:
+                raise ValueError(f"event missing {field}")
+        if event["source"] not in EVENT_SOURCES or event["kind"] not in EVENT_KINDS:
+            raise ValueError("event source or kind is invalid")
+        if not isinstance(event["run_id"], str) or not isinstance(event["payload"], dict):
+            raise ValueError("event fields have the wrong type")
+        ts = event["ts"]
+        if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(float(ts)):
+            raise ValueError("event ts is invalid")
+        seen.add(eid)
+        cleaned.append(
+            {
+                "id": eid,
+                "source": event["source"],
+                "kind": event["kind"],
+                "run_id": event["run_id"],
+                "payload": event["payload"],
+                "ts": float(ts),
+            }
+        )
+    tombs: list[str] = []
+    for tid in tombstones:
+        if not isinstance(tid, str) or not _EVENT_ID_RE.match(tid):
+            raise ValueError("tombstone id is invalid")
+        if tid in seen or tid in tombs:
+            raise ValueError("tombstone conflicts with a stored id")
+        tombs.append(tid)
+    return cleaned, tombs
+
+
+def load_event_store() -> None:
+    """Replace the in-memory log with CK_EVENTS_PATH. A missing file is empty.
+
+    A present file that cannot be parsed leaves the log closed: posts must not
+    answer duplicate:false when the durable dedup set is unreadable.
+    """
+    path = events_path()
+    event_log.path = str(path)
+    event_log.durable_error = None
+    event_log.by_id = OrderedDict()
+    event_log.tombstones = OrderedDict()
+    event_log.accepted = 0
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        events, tombs = _validate_store(data)
+    except Exception as exc:
+        logger.error("Event store %s is corrupt and will not be served: %s", path, exc)
+        event_log.durable_error = "corrupt"
+        event_log.by_id = OrderedDict()
+        event_log.tombstones = OrderedDict()
+        event_log.accepted = 0
+        return
+    for event in events:
+        event_log.by_id[event["id"]] = event
+    for tid in tombs:
+        event_log.tombstones[tid] = None
+    event_log.accepted = len(event_log.by_id) + len(event_log.tombstones)
+
+
+def _persist_state(events: OrderedDict, tombstones: OrderedDict) -> None:
+    path = events_path()
+    payload = {
+        "version": STORE_VERSION,
+        "events": list(events.values()),
+        "tombstones": list(tombstones.keys()),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=False).encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        with contextlib.suppress(Exception):
+            tmp.unlink()
+        raise
+    event_log.path = str(path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    load_event_store()
     with _relay_guard:
         relay_status.mode = "synthetic" if synthetic_enabled() else "relay"
         relay_status.url = configured_relay_url()
@@ -622,18 +764,33 @@ def _too_large(max_bytes: int) -> JSONResponse:
 
 
 def _store_event(event: Dict[str, Any]) -> bool:
-    """Return True when the id was already seen. Do not overwrite or re-append."""
+    """Return True when the id was already seen. Do not overwrite or re-append.
+
+    The durable file is replaced before memory changes. A failed write leaves
+    the previous log in place and raises StoreError so the caller does not ack.
+    """
+    if event_log.durable_error:
+        raise StoreError("event store corrupt")
     eid = event["id"]
     if eid in event_log.by_id or eid in event_log.tombstones:
         return True
-    event_log.by_id[eid] = event
+    new_events: OrderedDict[str, Dict[str, Any]] = OrderedDict(event_log.by_id)
+    new_events[eid] = event
+    new_tombs: OrderedDict[str, None] = OrderedDict(event_log.tombstones)
     cap = events_max_recent()
-    while len(event_log.by_id) > cap:
-        old, _ = event_log.by_id.popitem(last=False)
-        event_log.tombstones[old] = None
-        seen_cap = max(cap * 10, 1000)
-        while len(event_log.tombstones) > seen_cap:
-            event_log.tombstones.popitem(last=False)
+    seen_cap = max(cap * 10, 1000)
+    while len(new_events) > cap:
+        old, _ = new_events.popitem(last=False)
+        new_tombs[old] = None
+        while len(new_tombs) > seen_cap:
+            new_tombs.popitem(last=False)
+    try:
+        _persist_state(new_events, new_tombs)
+    except Exception as exc:
+        logger.error("Event store write failed: %s", exc)
+        raise StoreError("event store unavailable") from exc
+    event_log.by_id = new_events
+    event_log.tombstones = new_tombs
     event_log.accepted += 1
     return False
 
@@ -673,8 +830,12 @@ async def post_event(request: Request):
     if detail or event is None:
         _reject_event("body")
         return JSONResponse(status_code=400, content={"detail": detail or "body must be a JSON object"})
-    with _events_guard:
-        duplicate = _store_event(event)
+    try:
+        with _events_guard:
+            duplicate = _store_event(event)
+    except StoreError as exc:
+        _reject_event("body")
+        return JSONResponse(status_code=503, content={"detail": exc.detail})
     return {"accepted": True, "duplicate": duplicate, "id": event["id"]}
 
 
@@ -684,6 +845,8 @@ async def get_events(request: Request):
     if not _authorized(request):
         return _events_auth_failure()
     with _events_guard:
+        if event_log.durable_error:
+            return JSONResponse(status_code=503, content={"detail": "event store corrupt"})
         return {
             "events": list(event_log.by_id.values()),
             "accepted": event_log.accepted,

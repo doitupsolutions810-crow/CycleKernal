@@ -36,6 +36,9 @@ services:
       - CK_EVENTS_TOKEN_PREVIOUS=${CK_EVENTS_TOKEN_PREVIOUS:-}
       - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-4096}
       - CK_EVENTS_MAX_RECENT=${CK_EVENTS_MAX_RECENT:-100}
+      - CK_EVENTS_PATH=${CK_EVENTS_PATH:-/var/lib/cyclekernel/events.json}
+    volumes:
+      - ck-events:/var/lib/cyclekernel
     depends_on:
       ws-relay:
         condition: service_healthy
@@ -127,3 +130,5 @@ networks:
 volumes:
   ck-artifacts:
     name: ck-artifacts
+  ck-events:
+    name: ck-events

@@ -89,7 +89,7 @@ class ScriptedRelay:
 
 
 @pytest.fixture
-def bridge_env(monkeypatch):
+def bridge_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CK_SYNTHETIC", "0")
     monkeypatch.setenv("CK_RELAY_BACKOFF_INITIAL", "0.05")
     monkeypatch.setenv("CK_RELAY_BACKOFF_FACTOR", "2")
@@ -98,6 +98,7 @@ def bridge_env(monkeypatch):
     monkeypatch.setenv("CK_EVENTS_TOKEN", "test-token")
     monkeypatch.setenv("CK_EVENTS_MAX_BYTES", "65536")
     monkeypatch.setenv("CK_EVENTS_MAX_RECENT", "100")
+    monkeypatch.setenv("CK_EVENTS_PATH", str(tmp_path / "events.json"))
     monkeypatch.delenv("WS_RELAY_URL", raising=False)
     monkeypatch.setenv("RELAY_URL", f"ws://127.0.0.1:{_closed_port()}/ws/out")
     main.reset_runtime_state()
@@ -336,6 +337,7 @@ def test_events_bad_auth_and_unconfigured_token(bridge_env, monkeypatch):
     assert health["events"]["stored"] == 1
 
     monkeypatch.delenv("CK_EVENTS_TOKEN", raising=False)
+    main.events_path().unlink(missing_ok=True)
     main.reset_runtime_state()
     with TestClient(main.app) as client:
         blocked = client.post("/events", json=_fusion_event("auth-off"), headers=_auth())

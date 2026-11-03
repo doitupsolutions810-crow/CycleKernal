@@ -25,7 +25,7 @@ def _closed_port() -> int:
 
 
 @pytest.fixture
-def bridge_env(monkeypatch):
+def bridge_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CK_SYNTHETIC", "0")
     monkeypatch.setenv("CK_RELAY_BACKOFF_INITIAL", "0.05")
     monkeypatch.setenv("CK_RELAY_BACKOFF_MAX", "0.2")
@@ -36,6 +36,7 @@ def bridge_env(monkeypatch):
     monkeypatch.delenv("CK_EVENTS_TOKEN_PREVIOUS", raising=False)
     monkeypatch.setenv("CK_EVENTS_MAX_BYTES", "4096")
     monkeypatch.setenv("CK_EVENTS_MAX_RECENT", "100")
+    monkeypatch.setenv("CK_EVENTS_PATH", str(tmp_path / "events.json"))
     monkeypatch.delenv("WS_RELAY_URL", raising=False)
     monkeypatch.setenv("RELAY_URL", f"ws://127.0.0.1:{_closed_port()}/ws/out")
     main.reset_runtime_state()
@@ -200,6 +201,88 @@ def test_contract_field_rules(bridge_env):
     stored = listed["events"][0]
     assert stored["run_id"] == "r" * 80
     assert isinstance(stored["ts"], float) and stored["ts"] > 0
+
+
+def test_restart_keeps_events_and_tombstones(bridge_env, monkeypatch):
+    monkeypatch.setenv("CK_EVENTS_MAX_RECENT", "1")
+    with TestClient(main.app) as client:
+        first = client.post("/v1/events", json=_fusion_event("evt-old", payload={"text": "kept"}), headers=_admin())
+        second = client.post("/v1/events", json=_fusion_event("evt-new"), headers=_admin())
+        assert first.json()["duplicate"] is False
+        assert second.json()["duplicate"] is False
+    main.reset_runtime_state()
+    with TestClient(main.app) as client:
+        replay_old = client.post(
+            "/v1/events",
+            json=_fusion_event("evt-old", payload={"text": "rewritten"}),
+            headers=_admin(),
+        )
+        replay_new = client.post("/v1/events", json=_fusion_event("evt-new"), headers=_admin())
+        listed = client.get("/v1/events", headers=_admin()).json()
+    assert replay_old.json() == {"accepted": True, "duplicate": True, "id": "evt-old"}
+    assert replay_new.json()["duplicate"] is True
+    assert [event["id"] for event in listed["events"]] == ["evt-new"]
+    assert listed["events"][0]["payload"] == {"text": "heat"}
+
+
+def test_corrupt_store_fails_closed_and_is_left_in_place(bridge_env):
+    path = main.events_path()
+    path.write_text("{not-json", encoding="utf-8")
+    main.reset_runtime_state()
+    with TestClient(main.app) as client:
+        denied = client.post("/v1/events", json=_fusion_event("evt-new"), headers=_admin())
+        health = client.get("/health").json()
+        listing = client.get("/v1/events", headers=_admin())
+    assert denied.status_code == 503
+    assert denied.json()["detail"] == "event store corrupt"
+    assert denied.json().get("duplicate") is not False
+    assert health["events"]["durable"] is False
+    assert health["events"]["stored"] == 0
+    assert listing.status_code == 503
+    assert path.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_store_write_failure_does_not_ack(bridge_env, monkeypatch, tmp_path):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("CK_EVENTS_PATH", str(blocker / "events.json"))
+    main.reset_runtime_state()
+    with TestClient(main.app) as client:
+        failed = client.post("/v1/events", json=_fusion_event("evt-disk"), headers=_admin())
+        again = client.post("/v1/events", json=_fusion_event("evt-disk"), headers=_admin())
+    assert failed.status_code == 503
+    assert failed.json()["detail"] == "event store unavailable"
+    assert again.status_code == 503
+    assert again.json().get("duplicate") is not True
+
+
+def test_token_whitespace_is_not_stripped(bridge_env, monkeypatch):
+    with TestClient(main.app) as client:
+        padded_admin = client.post(
+            "/v1/events",
+            json=_fusion_event("evt-pad"),
+            headers={"X-Admin-Token": "test-token "},
+        )
+        padded_bearer = client.post(
+            "/v1/events",
+            json=_fusion_event("evt-bearer-pad"),
+            headers={"Authorization": "Bearer test-token "},
+        )
+        exact = client.post("/v1/events", json=_fusion_event("evt-exact"), headers=_admin())
+    assert padded_admin.status_code == 401
+    assert padded_bearer.status_code == 401
+    assert exact.status_code == 200
+
+    monkeypatch.setenv("CK_EVENTS_TOKEN", "test-token ")
+    with TestClient(main.app) as client:
+        trimmed = client.post("/v1/events", json=_fusion_event("evt-trim"), headers=_admin("test-token"))
+        exact_space = client.post(
+            "/v1/events",
+            json=_fusion_event("evt-space"),
+            headers={"X-Admin-Token": "test-token "},
+        )
+    assert trimmed.status_code == 401
+    assert exact_space.status_code == 200
 
 
 def test_fusion_token_wins_over_shared_token(bridge_env, monkeypatch):

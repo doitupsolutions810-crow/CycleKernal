@@ -7,16 +7,13 @@ Does not call a live model. Proves the production URL path and the fallback.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
 CHAT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(CHAT_DIR))
 
-os.environ.pop("LLM_BASE_URL", None)
-os.environ.pop("LLM_API_KEY", None)
-
+import httpx  # noqa: E402
 import reasoner  # noqa: E402
 
 
@@ -54,13 +51,18 @@ def test_completions_path_is_openai_compatible():
     reasoner.LLM_BASE_URL = "http://llm.internal:8000"
     reasoner.LLM_API_KEY = "test-key"
     reasoner.LLM_MODEL = "colony-reasoner"
+    original_client = reasoner.httpx.AsyncClient
     reasoner.httpx.AsyncClient = FakeClient
-    raw = asyncio.run(reasoner.call_llm([{"role": "user", "content": "plan a migration"}], mood_override="convergent"))
+    try:
+        raw = asyncio.run(reasoner.call_llm([{"role": "user", "content": "plan a migration"}], mood_override="convergent"))
+    finally:
+        reasoner.httpx.AsyncClient = original_client
     assert raw.startswith("{")
     assert captured["url"] == "http://llm.internal:8000/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["json"]["model"] == "colony-reasoner"
     assert "convergent" in captured["json"]["messages"][0]["content"]
+    assert reasoner.httpx.AsyncClient is httpx.AsyncClient
 
 
 def test_reason_falls_back_when_base_url_missing():
@@ -93,10 +95,15 @@ def test_reason_uses_custom_llm_when_configured():
 
     reasoner.LLM_BASE_URL = "https://llm.example"
     reasoner.LLM_API_KEY = ""
+    original_client = reasoner.httpx.AsyncClient
     reasoner.httpx.AsyncClient = FakeClient
-    decision = asyncio.run(reasoner.reason("hello colony"))
+    try:
+        decision = asyncio.run(reasoner.reason("hello colony"))
+    finally:
+        reasoner.httpx.AsyncClient = original_client
     assert decision["source"] == "custom_llm"
     assert decision["tool"] == "planning"
+    assert reasoner.httpx.AsyncClient is httpx.AsyncClient
 
 
 if __name__ == "__main__":
