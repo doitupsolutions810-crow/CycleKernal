@@ -8,7 +8,12 @@ services:
     networks:
       - cyclekernel-network
     environment:
-      - RELAY_URL=ws://ws-relay:8081/ws/out
+      # Real LoopMem intake. CK_SYNTHETIC=1 restores the fixed sample heartbeat.
+      - WS_RELAY_URL=${WS_RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - RELAY_URL=${RELAY_URL:-ws://ws-relay:8081/ws/out}
+      - CK_SYNTHETIC=${CK_SYNTHETIC:-0}
+      - CK_EVENTS_TOKEN=${CK_EVENTS_TOKEN:-}
+      - CK_EVENTS_MAX_BYTES=${CK_EVENTS_MAX_BYTES:-65536}
     restart: unless-stopped
 
 networks:
