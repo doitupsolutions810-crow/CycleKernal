@@ -57,3 +57,19 @@ test('reject extra separators in authorization header', () => {
     assert.equal(run({authorization:auth}).status,401);
   }
 });
+
+test('server wires the private API gate before every protected route', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sourcePath = path.resolve(__dirname, '../backend/server.js');
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const gate = source.indexOf("app.use('/api', privateApiGuard);");
+  const firstPrivate = Math.min(...[
+    source.indexOf("app.post('/api/chat/save'"),
+    source.indexOf("app.get('/api/chat/history"),
+    source.indexOf("app.post('/api/simulation/snapshot'"),
+    source.indexOf("app.get('/api/users/active'")
+  ].filter(i => i >= 0));
+  assert.ok(gate >= 0, 'private API gate must be registered');
+  assert.ok(firstPrivate > gate, 'private API gate must precede all handlers');
+});
