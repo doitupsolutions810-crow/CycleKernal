@@ -785,10 +785,11 @@ def _events_auth_failure() -> JSONResponse:
 
 def _too_large(max_bytes: int) -> JSONResponse:
     _reject_event("size")
+    # The ASGI server drains unread frames. An explicit connection close can
+    # race an in-flight client body and truncate this response with a TCP reset.
     return JSONResponse(
         status_code=413,
         content={"detail": f"request body too large (max {max_bytes} bytes)"},
-        headers={"Connection": "close"},
     )
 
 
