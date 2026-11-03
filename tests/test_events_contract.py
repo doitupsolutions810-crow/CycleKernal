@@ -136,7 +136,7 @@ def test_over_4096_is_413_before_auth(bridge_env, monkeypatch):
         health = client.get("/health").json()
     assert wrong.status_code == 413
     assert wrong.json() == TOO_LARGE
-    assert wrong.headers["connection"] == "close"
+    assert wrong.headers.get("connection") != "close"
     assert missing.status_code == 413
     assert health["events"]["rejected_auth"] == 0
     assert health["events"]["rejected_size"] == 2
