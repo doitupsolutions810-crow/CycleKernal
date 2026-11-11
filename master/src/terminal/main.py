@@ -52,7 +52,15 @@ async def execute(req: ExecuteRequest):
     if ".." in req.filename or req.filename.startswith("/"):
         raise HTTPException(400, "invalid filename")
 
-    target = ARTIFACT_ROOT / req.filename
+    root = ARTIFACT_ROOT.resolve()
+    if not req.filename.strip() or "\x00" in req.filename:
+        raise HTTPException(400, "invalid filename")
+    target = (root / req.filename).resolve()
+    if target == root or root not in target.parents:
+        raise HTTPException(400, "invalid filename")
+    if not 1 <= req.timeout_sec <= 120:
+        raise HTTPException(422, "timeout_sec must be between 1 and 120")
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(req.content, encoding="utf-8")
     logger.info(f"Artifact written: {target}")
 

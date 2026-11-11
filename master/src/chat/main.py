@@ -84,6 +84,20 @@ async def get_mood() -> Dict:
         return {"mood": "neutral", "traits": [], "system_prompt_override": ""}
 
 
+def _parse_tool_calls(payload: Any) -> List[ToolCall]:
+    """Validate an OpenAI-style tool_calls array; raise 422 instead of 500 on bad shapes."""
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="body must be a JSON object")
+    raw_calls = payload.get("tool_calls") or []
+    if not isinstance(raw_calls, list):
+        raise HTTPException(status_code=422, detail="tool_calls must be an array")
+    if len(raw_calls) > 100:
+        raise HTTPException(status_code=422, detail="at most 100 tool_calls per request")
+    if not all(isinstance(c, dict) for c in raw_calls):
+        raise HTTPException(status_code=422, detail="each tool_call must be an object")
+    return [ToolCall.from_openai(c) for c in raw_calls]
+
+
 @app.get("/health")
 async def health():
     mood = await get_mood()
@@ -217,8 +231,7 @@ async def execute_tools_endpoint(payload: Dict[str, Any]):
     """
     from tools import tool_results_to_messages
 
-    raw_calls = payload.get("tool_calls") or []
-    calls = [ToolCall.from_openai(c) for c in raw_calls]
+    calls = _parse_tool_calls(payload)
     results = await execute_tool_calls(calls)
     return {
         "protocol": "tool_calling_v1",
@@ -276,11 +289,16 @@ async def execute_advanced(payload: Dict[str, Any]):
         else ToolChoiceMode.AUTO
     )
     plan = payload.get("plan")
+    if plan is not None and (
+        not isinstance(plan, list)
+        or len(plan) > 100
+        or not all(isinstance(step, dict) for step in plan)
+    ):
+        raise HTTPException(status_code=422, detail="plan must be an array of at most 100 objects")
     if plan:
         results = await ADVANCED.execute_dag(plan)
     else:
-        raw_calls = payload.get("tool_calls") or []
-        calls = [ToolCall.from_openai(c) for c in raw_calls]
+        calls = _parse_tool_calls(payload)
         results = await ADVANCED.execute_parallel(calls, tool_choice=choice)
 
     return {

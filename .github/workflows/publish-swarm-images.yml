@@ -3,6 +3,11 @@ name: Publish CycleKernel Swarm images
 on:
   push:
     branches: [main, doitupsolutions810-crow-automatic-fishstick]
+    paths-ignore:
+      - docker-stack.yml
+      - k8s/**
+      - scripts/**
+      - .github/workflows/edge-tests.yml
   workflow_dispatch:
 
 permissions:

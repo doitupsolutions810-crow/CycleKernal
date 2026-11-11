@@ -242,7 +242,7 @@ async def submit_approval_request(payload: Dict[str, Any]):
 async def decide_approval(body: ApprovalIn):
     item = _pending_approvals.pop(body.id, None)
     if not item:
-        raise KeyError("approval not found")
+        raise HTTPException(404, "approval not found")
     item["status"] = "approved" if body.approve else "denied"
     item["reason"] = body.reason
     # Genome promote path

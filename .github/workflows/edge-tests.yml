@@ -19,6 +19,7 @@ jobs:
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
       EDGE_SOAK_REQUESTS: "500"
       EDGE_SOAK_WORKERS: "24"
+      EDGE_SOAK_SECONDS: "60"
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack
