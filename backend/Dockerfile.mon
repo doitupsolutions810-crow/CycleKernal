@@ -6,10 +6,10 @@ WORKDIR /app
 RUN apk add --no-cache curl
 
 # Copy package files
-COPY package.json package-lock.json* ./
+COPY package.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install production dependencies; this checkout has no lockfile.
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Copy application code
 COPY server.js .

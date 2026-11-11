@@ -1,0 +1,45 @@
+name: CycleKernel edge tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  edge-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
+      MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
+      GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
+      EDGE_SOAK_REQUESTS: "500"
+      EDGE_SOAK_WORKERS: "24"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the Compose test stack
+        run: docker compose up --pull always -d --build
+      - name: Wait for services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in simulation monitoring cognitive-bridge terminal-runtime orchestrator chat colony frontend; do
+            for attempt in {1..60}; do
+              state="$(docker compose ps --format json "$service" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Health", ""))')"
+              [[ "$state" == healthy ]] && break
+              [[ "$attempt" -lt 60 ]] || { docker compose logs "$service"; exit 1; }
+              sleep 2
+            done
+          done
+      - name: Run robust chat and agent edge suite
+        run: python3 scripts/edge_test.py http://127.0.0.1:8080
+      - name: Show service state on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --tail=200
+      - name: Stop test stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

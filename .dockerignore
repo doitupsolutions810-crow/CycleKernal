@@ -1,0 +1,17 @@
+**/__pycache__
+**/*.py[cod]
+**/.DS_Store
+**/.git
+**/node_modules
+**/build
+**/dist
+**/.pytest_cache
+**/.venv
+**/venv*
+.env
+.env.*
+!.env.example
+logs
+*.log
+*.tar
+*.zip

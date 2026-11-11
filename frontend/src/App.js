@@ -7,8 +7,8 @@ import {
 } from 'recharts';
 import './App.css';
 
-const SIMULATION_URL = process.env.REACT_APP_SIMULATION_URL || 'http://localhost:5000';
-const MONITORING_URL = process.env.REACT_APP_MONITORING_URL || 'http://localhost:3000';
+const SIMULATION_URL = process.env.REACT_APP_SIMULATION_URL || '/api/simulation';
+const MONITORING_URL = process.env.REACT_APP_MONITORING_URL || '/api/monitoring';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
@@ -20,10 +20,13 @@ function App() {
   const [metrics, setMetrics] = useState([]);
   const [activeUsers, setActiveUsers] = useState(0);
   const [dashboardData, setDashboardData] = useState(null);
+  const [chatMessage, setChatMessage] = useState('');
+  const [chatReply, setChatReply] = useState('');
+  const [chatSending, setChatSending] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
-    const newSocket = io(SIMULATION_URL);
+    const newSocket = io({ path: '/socket.io' });
     
     newSocket.on('connect', () => {
       console.log('Connected to simulation server');
@@ -153,6 +156,22 @@ function App() {
     }
   };
 
+  const sendChatMessage = async (event) => {
+    event.preventDefault();
+    const message = chatMessage.trim();
+    if (!message || chatSending) return;
+    setChatSending(true);
+    try {
+      const response = await axios.post('/api/chat/v1/chat', { message });
+      setChatReply(response.data.reply || '');
+      setChatMessage('');
+    } catch (error) {
+      setChatReply(error.response?.data?.detail || error.message || 'Chat request failed');
+    } finally {
+      setChatSending(false);
+    }
+  };
+
   const getFactionData = () => {
     if (!simulationState?.universes?.U1?.factions) return [];
     const factions = simulationState.universes.U1.factions;
@@ -177,6 +196,22 @@ function App() {
         <button onClick={() => runCycles(10)} disabled={!connected}>⏭️ Run 10 Cycles</button>
         <button onClick={() => runCycles(100)} disabled={!connected}>⏭️ Run 100 Cycles</button>
       </div>
+
+      <section className="chat-panel">
+        <h2>CycleKernel Agent Chat</h2>
+        <form onSubmit={sendChatMessage}>
+          <input
+            aria-label="Message the agent"
+            value={chatMessage}
+            onChange={(event) => setChatMessage(event.target.value)}
+            placeholder="Ask the CycleKernel agents..."
+          />
+          <button type="submit" disabled={chatSending || !chatMessage.trim()}>
+            {chatSending ? 'Sending…' : 'Send'}
+          </button>
+        </form>
+        {chatReply && <pre role="status">{chatReply}</pre>}
+      </section>
 
       <div className="dashboard">
         <div className="stats-grid">

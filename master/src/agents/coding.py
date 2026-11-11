@@ -22,6 +22,7 @@ class CodingAgent(BaseAgent):
         goal = task.get("goal") or task.get("spec") or "implement requested feature"
         language = task.get("language", "python")
 
+        # Produce a minimal but real artifact that the terminal runtime can later execute.
         if language == "python":
             code = textwrap.dedent(f'''\
                 """

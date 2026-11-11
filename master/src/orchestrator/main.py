@@ -77,6 +77,15 @@ async def proxy_mood():
 
 @app.post("/v1/run", response_model=PipelineResult)
 async def run_pipeline(req: GoalRequest):
+    """
+    Full closed-loop pipeline:
+    1. Snapshot mood
+    2. Research
+    3. Plan
+    4. Code
+    5. (optional) Execute in terminal sandbox
+    6. Feedback into CognitiveBridge
+    """
     stages = []
     started_mood = {}
 
@@ -86,12 +95,15 @@ async def run_pipeline(req: GoalRequest):
     except Exception:
         started_mood = {"mood": "neutral", "traits": []}
 
+    # --- Research ---
     research_res = await research_agent.run({"query": req.goal, **req.context})
     stages.append({"stage": "research", **research_res.__dict__})
 
+    # --- Planning ---
     plan_res = await planning_agent.run({"goal": req.goal, "research": research_res.output})
     stages.append({"stage": "planning", **plan_res.__dict__})
 
+    # --- Coding ---
     filename = req.filename or f"artifact_{datetime.utcnow().strftime('%H%M%S')}.py"
     code_res = await coding_agent.run({
         "goal": req.goal,
@@ -104,6 +116,7 @@ async def run_pipeline(req: GoalRequest):
     final_artifact = code_res.output if code_res.success else None
     execution = None
 
+    # --- Terminal execution ---
     if req.auto_execute and final_artifact:
         try:
             async with httpx.AsyncClient(timeout=30.0) as c:
@@ -119,11 +132,12 @@ async def run_pipeline(req: GoalRequest):
             execution = {"error": str(e)}
             stages.append({"stage": "execution", "success": False, "output": execution})
 
+    # --- Closed-loop feedback ---
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
             await c.post(f"{BRIDGE_URL}/v1/feedback", json={
                 "goal": req.goal,
-                "success": code_res.success and (execution is None or not execution.get("error")),
+                "success": all(s.get("success", False) for s in stages if s["stage"] != "execution") or (execution and not execution.get("error")),
                 "stages": [s["stage"] for s in stages],
                 "mood_at_start": started_mood.get("mood"),
             })

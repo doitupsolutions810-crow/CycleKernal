@@ -1,0 +1,427 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cyclekernel
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyclekernel-config
+  namespace: cyclekernel
+data:
+  BRIDGE_URL: http://cognitive-bridge:8090
+  TERMINAL_URL: http://terminal-runtime:8200
+  CHAT_URL: http://chat:8300
+  ORCH_URL: http://orchestrator:8100
+  REDIS_URL: redis://redis:6379
+  ARTIFACT_ROOT: /artifacts
+  CK_ARTIFACT_ROOT: /artifacts
+  CK_COLONY_DATA: /data
+  PYTHONPATH: /app:/app/src
+  BRIDGE_USE_NS: "1"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: mongodb-data, namespace: cyclekernel}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: redis-data, namespace: cyclekernel}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: artifacts, namespace: cyclekernel}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 5Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: colony-data, namespace: cyclekernel}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mongodb, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mongodb}}
+  template:
+    metadata: {labels: {app: mongodb}}
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7
+          args: ["mongod", "--bind_ip_all"]
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: cyclekernel
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cyclekernel-secrets
+                  key: MONGO_INITDB_ROOT_PASSWORD
+          ports: [{name: mongo, containerPort: 27017}]
+          volumeMounts: [{name: data, mountPath: /data/db}]
+          readinessProbe:
+            exec: {command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe: {tcpSocket: {port: mongo}, initialDelaySeconds: 30, periodSeconds: 20}
+      securityContext: {fsGroup: 999}
+      volumes: [{name: data, persistentVolumeClaim: {claimName: mongodb-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mongodb, namespace: cyclekernel}
+spec:
+  selector: {app: mongodb}
+  ports: [{name: mongo, port: 27017, targetPort: mongo}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redis, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--appendonly", "yes"]
+          ports: [{name: redis, containerPort: 6379}]
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 10}
+          livenessProbe: {tcpSocket: {port: redis}, periodSeconds: 20}
+      securityContext: {fsGroup: 999}
+      volumes: [{name: data, persistentVolumeClaim: {claimName: redis-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: cyclekernel}
+spec:
+  selector: {app: redis}
+  ports: [{name: redis, port: 6379, targetPort: redis}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: simulation, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: simulation}}
+  template:
+    metadata: {labels: {app: simulation}}
+    spec:
+      containers:
+        - name: simulation
+          image: cyclekernel-simulation:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 5000}]
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: simulation, namespace: cyclekernel}
+spec:
+  selector: {app: simulation}
+  ports: [{name: http, port: 5000, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: cognitive-bridge, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: cognitive-bridge}}
+  template:
+    metadata: {labels: {app: cognitive-bridge}}
+    spec:
+      containers:
+        - name: cognitive-bridge
+          image: cyclekernel-bridge:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: cyclekernel-config}}]
+          ports: [{name: http, containerPort: 8090}]
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: cognitive-bridge, namespace: cyclekernel}
+spec:
+  selector: {app: cognitive-bridge}
+  ports: [{name: http, port: 8090, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: terminal-runtime, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: terminal-runtime}}
+  template:
+    metadata: {labels: {app: terminal-runtime}}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: terminal-runtime
+          image: cyclekernel-terminal:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: cyclekernel-config}}]
+          ports: [{name: http, containerPort: 8200}]
+          volumeMounts: [{name: artifacts, mountPath: /artifacts}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+      volumes: [{name: artifacts, persistentVolumeClaim: {claimName: artifacts}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: terminal-runtime, namespace: cyclekernel}
+spec:
+  selector: {app: terminal-runtime}
+  ports: [{name: http, port: 8200, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: orchestrator, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: orchestrator}}
+  template:
+    metadata: {labels: {app: orchestrator}}
+    spec:
+      containers:
+        - name: orchestrator
+          image: cyclekernel-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: cyclekernel-config}}]
+          ports: [{name: http, containerPort: 8100}]
+          volumeMounts: [{name: artifacts, mountPath: /artifacts}]
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+      securityContext: {runAsUser: 999, fsGroup: 999}
+      volumes: [{name: artifacts, persistentVolumeClaim: {claimName: artifacts}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: orchestrator, namespace: cyclekernel}
+spec:
+  selector: {app: orchestrator}
+  ports: [{name: http, port: 8100, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: chat, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: chat}}
+  template:
+    metadata: {labels: {app: chat}}
+    spec:
+      containers:
+        - name: chat
+          image: cyclekernel-chat:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - {configMapRef: {name: cyclekernel-config}}
+            - {secretRef: {name: cyclekernel-secrets}}
+          volumeMounts: [{name: artifacts, mountPath: /artifacts}]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8300}]
+          
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+      securityContext: {fsGroup: 999}
+      volumes: [{name: artifacts, persistentVolumeClaim: {claimName: artifacts}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: chat, namespace: cyclekernel}
+spec:
+  selector: {app: chat}
+  ports: [{name: http, port: 8300, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: colony, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: colony}}
+  template:
+    metadata: {labels: {app: colony}}
+    spec:
+      containers:
+        - name: colony
+          image: cyclekernel-colony:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: cyclekernel-config}}]
+          ports: [{name: http, containerPort: 8500}]
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts}
+            - {name: data, mountPath: /data}
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+      securityContext: {runAsUser: 999, fsGroup: 999}
+      volumes:
+        - {name: artifacts, persistentVolumeClaim: {claimName: artifacts}}
+        - {name: data, persistentVolumeClaim: {claimName: colony-data}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: colony, namespace: cyclekernel}
+spec:
+  selector: {app: colony}
+  ports: [{name: http, port: 8500, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: monitoring, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: monitoring}}
+  template:
+    metadata: {labels: {app: monitoring}}
+    spec:
+      containers:
+        - name: monitoring
+          image: cyclekernel-monitoring:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: cyclekernel-config}}]
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: cyclekernel
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cyclekernel-secrets
+                  key: MONGO_INITDB_ROOT_PASSWORD
+            - name: MONGODB_URI
+              value: mongodb://$(MONGO_INITDB_ROOT_USERNAME):$(MONGO_INITDB_ROOT_PASSWORD)@mongodb:27017/cyclekernel?authSource=admin
+          ports: [{name: http, containerPort: 3000}]
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: monitoring, namespace: cyclekernel}
+spec:
+  selector: {app: monitoring}
+  ports: [{name: http, port: 3000, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+          ports: [{name: http, containerPort: 9090}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml, readOnly: true}
+      volumes: [{name: config, configMap: {name: prometheus-config}}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus-config, namespace: cyclekernel}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: simulation
+        static_configs:
+          - targets: ['simulation:5000']
+      - job_name: monitoring
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['monitoring:3000']
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: cyclekernel}
+spec:
+  selector: {app: prometheus}
+  ports: [{name: http, port: 9090, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.1.0
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cyclekernel-secrets
+                  key: GRAFANA_ADMIN_PASSWORD
+          ports: [{name: http, containerPort: 3000}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: cyclekernel}
+spec:
+  type: NodePort
+  selector: {app: grafana}
+  ports: [{name: http, port: 3001, targetPort: http, nodePort: 30081}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: frontend, namespace: cyclekernel}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: frontend}}
+  template:
+    metadata: {labels: {app: frontend}}
+    spec:
+      containers:
+        - name: frontend
+          image: cyclekernel-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 80}]
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: frontend, namespace: cyclekernel}
+spec:
+  type: NodePort
+  selector: {app: frontend}
+  ports: [{name: http, port: 8080, targetPort: http, nodePort: 30080}]

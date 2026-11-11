@@ -1,0 +1,61 @@
+name: Publish CycleKernel Swarm images
+
+on:
+  push:
+    branches: [main, doitupsolutions810-crow-automatic-fishstick]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+          - image: simulation
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.sim
+          - image: monitoring
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.mon
+          - image: bridge
+            context: ./master/src
+            dockerfile: ./master/src/bridge/Dockerfile
+          - image: terminal
+            context: ./master/src/terminal
+            dockerfile: ./master/src/terminal/Dockerfile
+          - image: orchestrator
+            context: ./master
+            dockerfile: ./master/Dockerfile.master
+          - image: chat
+            context: ./master/src
+            dockerfile: ./master/src/chat/Dockerfile
+          - image: colony
+            context: ./master/src
+            dockerfile: ./master/src/colony/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/cyclekernel-${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/cyclekernel-${{ matrix.image }}:latest
