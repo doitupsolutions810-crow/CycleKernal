@@ -222,6 +222,11 @@ spec:
                 secretKeyRef:
                   name: cyclekernel-secrets
                   key: CK_TERMINAL_SERVICE_TOKEN
+            - name: CK_TOOL_EXECUTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cyclekernel-secrets
+                  key: CK_TOOL_EXECUTION_TOKEN
           ports: [{name: http, containerPort: 8100}]
           volumeMounts: [{name: artifacts, mountPath: /artifacts}]
           readinessProbe: {httpGet: {path: /health, port: http}}
