@@ -77,8 +77,16 @@ def _save_session(session_id: str, messages: List[Dict[str, Any]]) -> None:
 
 def _is_execution_authorized(authorization: Optional[str]) -> bool:
     secret = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
-    return bool(secret) and bool(authorization) and hmac.compare_digest(
-        authorization, "Bearer " + secret
+    # Shared-session access must fail closed under credential-role collisions
+    # as well as active tool execution.
+    return (
+        bool(secret)
+        and secret not in (
+            os.getenv("CK_TOOL_APPROVAL_TOKEN", ""),
+            os.getenv("CK_TERMINAL_SERVICE_TOKEN", ""),
+        )
+        and bool(authorization)
+        and hmac.compare_digest(authorization, "Bearer " + secret)
     )
 
 

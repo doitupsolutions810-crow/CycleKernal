@@ -98,6 +98,25 @@ class SessionAccessTests(IsolatedAsyncioTestCase):
         self.assertNotIn("private-marker", str(chat.reason.call_args.kwargs.get("history", [])))
         self.assertEqual(chat._load_session("shared-id")[0]["content"], "private-marker")
 
+    async def test_duplicate_role_tokens_do_not_grant_session_access(self):
+        chat._save_session("collision", [
+            {"role": "user", "content": "private-do-not-read"},
+        ])
+        with patch.dict(os.environ, {
+            "CK_TOOL_EXECUTION_TOKEN": "reused-credential",
+            "CK_TOOL_APPROVAL_TOKEN": "reused-credential",
+            "CK_TERMINAL_SERVICE_TOKEN": "separate-internal",
+        }):
+            await chat.chat(chat.ChatRequest(
+                message="read-only under collision",
+                session_id="collision", auto_spawn=False,
+                use_tool_protocol=False,
+            ), authorization="Bearer reused-credential")
+        self.assertNotIn("private-do-not-read",
+                         str(chat.reason.call_args.kwargs.get("history", [])))
+        self.assertEqual(chat._load_session("collision")[0]["content"],
+                         "private-do-not-read")
+
     async def test_concurrent_authorized_turns_are_not_lost(self):
         async def delayed_reason(message, **_kwargs):
             await asyncio.sleep(0.03)
