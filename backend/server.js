@@ -121,8 +121,9 @@ app.use((req, res, next) => {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
+  const healthy = mongoose.connection.readyState === 1 && redisClient.isReady;
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',

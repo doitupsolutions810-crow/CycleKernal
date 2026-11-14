@@ -1,0 +1,199 @@
+version: "3.9"
+
+# Swarm stack. Images are pinned to the commit SHA published by .github/workflows/publish-swarm-images.yml.
+# Release: set CYCLEKERNEL_IMAGE_TAG=<full commit sha> (a single variable pins every service).
+services:
+  frontend:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-frontend:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    configs:
+      - source: nginx-config
+        target: /etc/nginx/conf.d/default.conf
+    ports:
+      - target: 80
+        published: ${CYCLEKERNEL_SWARM_WEB_PORT:-8081}
+        protocol: tcp
+        mode: ingress
+    networks: [app]
+    deploy:
+      replicas: 2
+      restart_policy: {condition: on-failure}
+      update_config: {parallelism: 1, order: start-first}
+
+  simulation:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-simulation:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    networks: [app]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  monitoring:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-monitoring:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      MONGODB_URI: mongodb://cyclekernel:${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD}@mongodb:27017/cyclekernel?authSource=admin
+      REDIS_URL: redis://redis:6379
+    networks: [app, data]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  cognitive-bridge:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-bridge:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      BRIDGE_USE_NS: "0"
+    networks: [app]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  terminal-runtime:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-terminal:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      ARTIFACT_ROOT: /artifacts
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
+    volumes:
+      - artifacts:/artifacts
+    networks: [runner]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+      placement:
+        constraints: [node.role == manager]
+
+  orchestrator:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-orchestrator:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      BRIDGE_URL: http://cognitive-bridge:8090
+      TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
+      CK_TOOL_EXECUTION_TOKEN: ${CK_TOOL_EXECUTION_TOKEN:?Set CK_TOOL_EXECUTION_TOKEN}
+      CHAT_URL: http://chat:8300
+      ARTIFACT_ROOT: /artifacts
+      PYTHONPATH: /app
+    volumes:
+      - artifacts:/artifacts
+    networks: [app, runner]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  chat:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-chat:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      BRIDGE_URL: http://cognitive-bridge:8090
+      ORCH_URL: http://orchestrator:8100
+      TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      CK_TOOL_APPROVAL_TOKEN: ${CK_TOOL_APPROVAL_TOKEN:?Set CK_TOOL_APPROVAL_TOKEN}
+      CK_TOOL_EXECUTION_TOKEN: ${CK_TOOL_EXECUTION_TOKEN:?Set CK_TOOL_EXECUTION_TOKEN}
+    networks: [app, runner]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  colony:
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-colony:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
+    environment:
+      BRIDGE_URL: http://cognitive-bridge:8090
+      CHAT_URL: http://chat:8300
+      CK_ARTIFACT_ROOT: /artifacts
+      PYTHONPATH: /app/src
+    volumes:
+      - artifacts:/artifacts
+      - colony-data:/data
+    networks: [app]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: cyclekernel
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD}
+    volumes: [mongodb-data:/data/db]
+    networks: [data]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+      placement:
+        constraints: [node.role == manager]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    networks: [data]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+      placement:
+        constraints: [node.role == manager]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    configs:
+      - source: prometheus-config
+        target: /etc/prometheus/prometheus.yml
+    volumes: [prometheus-data:/prometheus]
+    networks: [app]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+      placement:
+        constraints: [node.role == manager]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes: [grafana-data:/var/lib/grafana]
+    networks: [app]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: on-failure}
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  app:
+    name: cyclekernel-swarm-app
+    driver: overlay
+    attachable: true
+  runner:
+    name: cyclekernel-swarm-runner
+    driver: overlay
+    internal: true
+    attachable: true
+  data:
+    name: cyclekernel-swarm-data
+    driver: overlay
+    internal: true
+
+volumes:
+  artifacts:
+    name: cyclekernel-swarm-artifacts
+  colony-data:
+    name: cyclekernel-swarm-colony-data
+  mongodb-data:
+    name: cyclekernel-swarm-mongodb-data
+  redis-data:
+    name: cyclekernel-swarm-redis-data
+  prometheus-data:
+    name: cyclekernel-swarm-prometheus-data
+  grafana-data:
+    name: cyclekernel-swarm-grafana-data
+
+configs:
+  prometheus-config:
+    file: ./prometheus/prometheus.yml
+  nginx-config:
+    file: ./frontend/nginx.conf

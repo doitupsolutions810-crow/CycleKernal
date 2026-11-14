@@ -1,0 +1,125 @@
+name: CycleKernel edge tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  edge-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
+      MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
+      GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
+      EDGE_SOAK_REQUESTS: "5000"
+      EDGE_SOAK_WORKERS: "88"
+      EDGE_SOAK_SECONDS: "480"
+      CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
+      CK_TOOL_EXECUTION_TOKEN: ci-only-distinct-execution-token-not-for-production
+      CK_TERMINAL_SERVICE_TOKEN: ci-only-third-terminal-service-secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the Compose test stack
+        run: docker compose up --pull always -d --build
+      - name: Wait for services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in simulation monitoring cognitive-bridge terminal-runtime orchestrator chat colony frontend; do
+            for attempt in {1..60}; do
+              state="$(docker compose ps --format json "$service" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Health", ""))')"
+              [[ "$state" == healthy ]] && break
+              [[ "$attempt" -lt 60 ]] || { docker compose logs "$service"; exit 1; }
+              sleep 2
+            done
+          done
+      - name: Verify runner-network isolation and authorized service reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T frontend sh -c 'if wget -T 3 -qO- http://terminal-runtime:8200/health; then echo "runner exposed to frontend"; exit 1; else echo "runner isolated from frontend"; fi'
+          docker compose exec -T chat python -c 'import urllib.request; assert b"terminal-online" in urllib.request.urlopen("http://terminal-runtime:8200/health", timeout=5).read(); print("authorized chat-to-terminal path healthy")'
+      - name: Verify Kubernetes approval-token secret wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/secret-values.template.yaml
+          grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/secret-values.template.yaml
+          grep -q "CK_TERMINAL_SERVICE_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TERMINAL_SERVICE_TOKEN" k8s/secret-values.template.yaml
+          grep -q "key: CK_TERMINAL_SERVICE_TOKEN" k8s/cyclekernel.yaml
+          grep -q "key: CK_TOOL_EXECUTION_TOKEN" k8s/cyclekernel.yaml
+          grep -q "secretRef: {name: cyclekernel-secrets}" k8s/cyclekernel.yaml
+      - name: Verify internal terminal service authorization
+        run: docker compose exec -T chat python - < scripts/terminal_service_auth_test.py
+      - name: Verify orchestrator rejects unauthorized pipeline runs
+        run: docker compose exec -T chat python - < scripts/orchestrator_auth_test.py
+      - name: Verify orchestrator failure propagation and recovery
+        run: docker compose exec -T orchestrator python - < scripts/orchestrator_runtime_unit_tests.py
+      - name: Verify artifact path confinement and atomic agent writes
+        run: docker compose exec -T orchestrator python - < scripts/agent_artifact_path_tests.py
+      - name: Verify legacy and advanced approval policy consistency
+        run: docker compose exec -T chat python - < scripts/legacy_approval_unit_tests.py
+      - name: Run deterministic randomized DAG and schema regressions
+        run: docker compose exec -T chat python - < scripts/agent_dag_fuzz_tests.py
+      - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
+        run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
+      - name: Run terminal process-tree and bounded-output tests
+        run: docker compose exec -T terminal-runtime python - < scripts/terminal_runtime_unit_tests.py
+      - name: Run chat session privacy and bounded-memory unit tests
+        run: docker compose exec -T chat python - < scripts/chat_session_unit_tests.py
+      - name: Run robust chat and agent edge suite
+        run: python3 scripts/edge_test.py http://127.0.0.1:8080
+      - name: Inject dependency outages and verify recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker compose start cognitive-bridge terminal-runtime >/dev/null || true; }
+          trap cleanup EXIT
+          docker compose stop cognitive-bridge
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 bridge-down
+          docker compose start cognitive-bridge
+          docker compose stop terminal-runtime
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 terminal-down
+          docker compose start terminal-runtime
+          for service in cognitive-bridge terminal-runtime; do
+            for attempt in {1..60}; do
+              health="$(docker compose ps --format json "$service" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Health", ""))')"
+              [[ "$health" == healthy ]] && break
+              [[ "$attempt" -lt 60 ]] || { docker compose logs "$service"; exit 1; }
+              sleep 2
+            done
+          done
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 recovered
+      - name: Verify eight release image manifests (amd64 + arm64)
+        env:
+          CYCLEKERNEL_IMAGE_TAG: 621175fd960590937e40dbf381a1d9b036618e0e
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          ok=0
+          for service in frontend simulation monitoring bridge terminal orchestrator chat colony; do
+            ref="ghcr.io/$GITHUB_REPOSITORY_OWNER/cyclekernel-$service:$CYCLEKERNEL_IMAGE_TAG"
+            archs="$(docker buildx imagetools inspect --raw "$ref" | python3 -c 'import json,sys; x=json.load(sys.stdin); print(",".join(sorted({m.get("platform",{}).get("architecture") for m in x.get("manifests",[]) if m.get("platform",{}).get("os")=="linux" and m.get("platform",{}).get("architecture") not in (None,"unknown")})))')"
+            echo "$service: ${archs:-MISSING}"
+            [[ "$archs" == "amd64,arm64" ]]
+            ok=$((ok + 1))
+          done
+          echo "verified $ok/8"
+      - name: Show service state on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --tail=200
+      - name: Stop test stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

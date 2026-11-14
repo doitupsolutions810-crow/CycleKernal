@@ -4,7 +4,8 @@ Routes goals through research → planning → coding → terminal execution.
 All decisions are mood-aware via the CognitiveBridge.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
+import hmac
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
@@ -76,7 +77,21 @@ async def proxy_mood():
 
 
 @app.post("/v1/run", response_model=PipelineResult)
-async def run_pipeline(req: GoalRequest):
+async def run_pipeline(req: GoalRequest, authorization: Optional[str] = Header(default=None)):
+    execution_token = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
+    if not execution_token or execution_token == os.getenv("CK_TERMINAL_SERVICE_TOKEN", ""):
+        raise HTTPException(status_code=503, detail="distinct orchestrator execution credentials required")
+    if not authorization or not hmac.compare_digest(authorization, "Bearer " + execution_token):
+        raise HTTPException(status_code=403, detail="orchestrator execution authorization required")
+    """
+    Full closed-loop pipeline:
+    1. Snapshot mood
+    2. Research
+    3. Plan
+    4. Code
+    5. (optional) Execute in terminal sandbox
+    6. Feedback into CognitiveBridge
+    """
     stages = []
     started_mood = {}
 
@@ -86,12 +101,15 @@ async def run_pipeline(req: GoalRequest):
     except Exception:
         started_mood = {"mood": "neutral", "traits": []}
 
+    # --- Research ---
     research_res = await research_agent.run({"query": req.goal, **req.context})
     stages.append({"stage": "research", **research_res.__dict__})
 
+    # --- Planning ---
     plan_res = await planning_agent.run({"goal": req.goal, "research": research_res.output})
     stages.append({"stage": "planning", **plan_res.__dict__})
 
+    # --- Coding ---
     filename = req.filename or f"artifact_{datetime.utcnow().strftime('%H%M%S')}.py"
     code_res = await coding_agent.run({
         "goal": req.goal,
@@ -103,7 +121,9 @@ async def run_pipeline(req: GoalRequest):
 
     final_artifact = code_res.output if code_res.success else None
     execution = None
+    execution_succeeded = False
 
+    # --- Terminal execution ---
     if req.auto_execute and final_artifact:
         try:
             async with httpx.AsyncClient(timeout=30.0) as c:
@@ -112,25 +132,33 @@ async def run_pipeline(req: GoalRequest):
                     "content": final_artifact["content"],
                     "command": final_artifact.get("run_command"),
                 }
-                r = await c.post(f"{TERMINAL_URL}/v1/execute", json=exec_payload)
+                r = await c.post(f"{TERMINAL_URL}/v1/execute", json=exec_payload,
+                                 headers={"Authorization": "Bearer " + os.getenv("CK_TERMINAL_SERVICE_TOKEN", "")})
                 execution = r.json()
-                stages.append({"stage": "execution", "success": r.status_code == 200, "output": execution})
+                execution_succeeded = (
+                    r.status_code == 200
+                    and isinstance(execution, dict)
+                    and execution.get("exit_code") == 0
+                )
+                stages.append({"stage": "execution", "success": execution_succeeded, "output": execution})
         except Exception as e:
             execution = {"error": str(e)}
+            execution_succeeded = False
             stages.append({"stage": "execution", "success": False, "output": execution})
 
+    # --- Closed-loop feedback ---
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
             await c.post(f"{BRIDGE_URL}/v1/feedback", json={
                 "goal": req.goal,
-                "success": code_res.success and (execution is None or not execution.get("error")),
+                "success": all(s.get("success", False) for s in stages),
                 "stages": [s["stage"] for s in stages],
                 "mood_at_start": started_mood.get("mood"),
             })
     except Exception as e:
         logger.warning(f"Feedback failed: {e}")
 
-    success = code_res.success and (execution is None or not execution.get("error"))
+    success = bool(code_res.success and (not req.auto_execute or execution_succeeded))
     return PipelineResult(
         goal=req.goal,
         mood_at_start=started_mood.get("mood", "unknown"),

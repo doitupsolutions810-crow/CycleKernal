@@ -20,6 +20,8 @@ class PlanningAgent(BaseAgent):
         mood = await self.current_mood()
         goal = task.get("goal") or "unspecified goal"
 
+        # Survival mood → fewer, safer steps
+        # Divergent mood → more exploratory branches
         traits = set(mood.get("traits", []))
 
         steps: List[Dict] = [

@@ -8,10 +8,10 @@ import numpy as np
 from datetime import datetime
 import json
 import time
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 from flask_socketio import SocketIO
 from flask_cors import CORS
-from prometheus_client import Counter, Gauge, Histogram, generate_latest
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import logging
 
 from ns_fusion import colony_genome, fuse_mood, genome_id, ns_fitness, promote_decision
@@ -262,7 +262,7 @@ def health():
 
 @app.route("/metrics", methods=["GET"])
 def metrics():
-    return generate_latest()
+    return Response(generate_latest(), content_type=CONTENT_TYPE_LATEST)
 
 
 @app.route("/state", methods=["GET"])
