@@ -18,9 +18,9 @@ jobs:
       COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
       MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
-      EDGE_SOAK_REQUESTS: "1000"
-      EDGE_SOAK_WORKERS: "32"
-      EDGE_SOAK_SECONDS: "120"
+      EDGE_SOAK_REQUESTS: "2000"
+      EDGE_SOAK_WORKERS: "48"
+      EDGE_SOAK_SECONDS: "180"
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack
@@ -37,6 +37,8 @@ jobs:
               sleep 2
             done
           done
+      - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
+        run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
       - name: Run robust chat and agent edge suite
         run: python3 scripts/edge_test.py http://127.0.0.1:8080
       - name: Verify eight release image manifests (amd64 + arm64)

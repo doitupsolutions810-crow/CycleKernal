@@ -105,7 +105,10 @@ def _parse_tool_calls(payload: Any) -> List[ToolCall]:
                 or "name" in call and not isinstance(call["name"], str)
                 or "arguments" in fn and not isinstance(fn["arguments"], (str, dict))):
             raise HTTPException(status_code=422, detail="invalid tool_call fields")
-    return [ToolCall.from_openai(c) for c in raw_calls]
+    parsed = [ToolCall.from_openai(c) for c in raw_calls]
+    if any(not isinstance(c.arguments, dict) for c in parsed):
+        raise HTTPException(status_code=422, detail="tool arguments must be a JSON object")
+    return parsed
 
 
 @app.get("/health")

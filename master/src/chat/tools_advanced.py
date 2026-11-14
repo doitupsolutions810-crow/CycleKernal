@@ -177,6 +177,8 @@ class RateLimiter:
 
 def validate_args(schema: Dict[str, Any], args: Dict[str, Any]) -> Optional[str]:
     """Return error string if invalid, else None. Minimal JSON Schema subset."""
+    if not isinstance(args, dict):
+        return "arguments must be an object"
     if not schema:
         return None
     if schema.get("type") and schema["type"] != "object":
@@ -201,6 +203,9 @@ def validate_args(schema: Dict[str, Any], args: Dict[str, Any]) -> Optional[str]
             "object": dict,
         }
         py = type_map.get(expected)
+        # bool is a subclass of int in Python, but it is not a JSON number.
+        if expected in ("integer", "number") and isinstance(val, bool):
+            return f"{key} must be {expected}"
         if py and not isinstance(val, py):
             # coerce number from int
             if expected == "number" and isinstance(val, (int, float)):
@@ -332,116 +337,119 @@ class AdvancedToolRuntime:
                 error=f"bulkhead full for {call.name}",
             )
 
-        # Rate limit
-        if not self.rates.allow(call.name, policy):
-            return ToolResult(
-                tool_call_id=call.id,
-                name=call.name,
-                content={},
-                success=False,
-                error=f"rate limit exceeded for {call.name}",
-            )
-
-        # Schema validation
-        spec = self.registry._tools.get(call.name)
-        if not spec:
-            return ToolResult(
-                tool_call_id=call.id,
-                name=call.name,
-                content={},
-                success=False,
-                error=f"unknown tool: {call.name}",
-            )
-        verr = validate_args(spec.parameters or {}, call.arguments)
-        if verr:
-            return ToolResult(
-                tool_call_id=call.id,
-                name=call.name,
-                content={},
-                success=False,
-                error=f"schema validation: {verr}",
-            )
-
-        # Before hooks
-        for hook in self.middleware.before:
-            denial = await hook(call, trace)
-            if denial:
+        # Acquire succeeded: all paths (including denial, timeout, cancellation)
+        # must release this exact bulkhead slot.
+        try:
+            # Rate limit
+            if not self.rates.allow(call.name, policy):
                 return ToolResult(
                     tool_call_id=call.id,
                     name=call.name,
                     content={},
                     success=False,
-                    error=f"denied by middleware: {denial}",
+                    error=f"rate limit exceeded for {call.name}",
                 )
 
-        # Approval gate
-        if policy.requires_approval:
-            approved = await request_approval(call, trace)
-            if not approved:
+            # Schema validation
+            spec = self.registry._tools.get(call.name)
+            if not spec:
                 return ToolResult(
                     tool_call_id=call.id,
                     name=call.name,
-                    content={
-                        "status": "pending_approval",
-                        "call_id": call.id,
-                        "hint": "POST /v1/tools/approve {\"call_id\": \"...\", \"approve\": true}",
-                    },
+                    content={},
                     success=False,
-                    error="pending_approval",
+                    error=f"unknown tool: {call.name}",
+                )
+            verr = validate_args(spec.parameters or {}, call.arguments)
+            if verr:
+                return ToolResult(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content={},
+                    success=False,
+                    error=f"schema validation: {verr}",
                 )
 
-        # Execute with retries + timeout + concurrency limit
-        last_err: Optional[Exception] = None
-        async with self._sem(call.name, policy):
-            for attempt in range(policy.max_retries + 1):
-                try:
-                    result_content = await asyncio.wait_for(
-                        spec.handler(call.arguments),
-                        timeout=policy.timeout_sec,
-                    )
-                    result = ToolResult(
+            # Before hooks
+            for hook in self.middleware.before:
+                denial = await hook(call, trace)
+                if denial:
+                    return ToolResult(
                         tool_call_id=call.id,
                         name=call.name,
-                        content=truncate_result(
-                            result_content if isinstance(result_content, dict) else {"result": result_content},
-                            policy.max_result_chars,
-                        ),
-                        success=True,
+                        content={},
+                        success=False,
+                        error=f"denied by middleware: {denial}",
                     )
-                    await self.circuits.record_success(call.name)
-                    for hook in self.middleware.after:
-                        result = await hook(call, result, trace)
-                    trace.event(
-                        "tool_ok",
-                        tool=call.name,
-                        call_id=call.id,
-                        attempt=attempt,
-                    )
-                    await bh.release()
-                    return result
-                except Exception as e:
-                    last_err = e
-                    await self.circuits.record_failure(call.name)
-                    for hook in self.middleware.on_error:
-                        await hook(call, e, trace)
-                    trace.event(
-                        "tool_error",
-                        tool=call.name,
-                        call_id=call.id,
-                        attempt=attempt,
-                        error=str(e),
-                    )
-                    if attempt < policy.max_retries:
-                        await asyncio.sleep(policy.retry_backoff_sec * (attempt + 1))
 
-        await bh.release()
-        return ToolResult(
-            tool_call_id=call.id,
-            name=call.name,
-            content={},
-            success=False,
-            error=str(last_err) if last_err else "unknown error",
-        )
+            # Approval gate
+            if policy.requires_approval:
+                approved = await request_approval(call, trace)
+                if not approved:
+                    return ToolResult(
+                        tool_call_id=call.id,
+                        name=call.name,
+                        content={
+                            "status": "pending_approval",
+                            "call_id": call.id,
+                            "hint": "POST /v1/tools/approve {\"call_id\": \"...\", \"approve\": true}",
+                        },
+                        success=False,
+                        error="pending_approval",
+                    )
+
+            # Execute with retries + timeout + concurrency limit
+            last_err: Optional[Exception] = None
+            async with self._sem(call.name, policy):
+                for attempt in range(policy.max_retries + 1):
+                    try:
+                        result_content = await asyncio.wait_for(
+                            spec.handler(call.arguments),
+                            timeout=policy.timeout_sec,
+                        )
+                        result = ToolResult(
+                            tool_call_id=call.id,
+                            name=call.name,
+                            content=truncate_result(
+                                result_content if isinstance(result_content, dict) else {"result": result_content},
+                                policy.max_result_chars,
+                            ),
+                            success=True,
+                        )
+                        await self.circuits.record_success(call.name)
+                        for hook in self.middleware.after:
+                            result = await hook(call, result, trace)
+                        trace.event(
+                            "tool_ok",
+                            tool=call.name,
+                            call_id=call.id,
+                            attempt=attempt,
+                        )
+                        return result
+                    except Exception as e:
+                        last_err = e
+                        await self.circuits.record_failure(call.name)
+                        for hook in self.middleware.on_error:
+                            await hook(call, e, trace)
+                        trace.event(
+                            "tool_error",
+                            tool=call.name,
+                            call_id=call.id,
+                            attempt=attempt,
+                            error=str(e),
+                        )
+                        if attempt < policy.max_retries:
+                            await asyncio.sleep(policy.retry_backoff_sec * (attempt + 1))
+
+            return ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content={},
+                success=False,
+                error=str(last_err) if last_err else "unknown error",
+            )
+        finally:
+            await bh.release()
 
     async def execute_parallel(
         self,
@@ -525,19 +533,42 @@ class AdvancedToolRuntime:
                     ))
                 break
 
-            calls = [
-                ToolCall(
-                    id=p["id"],
-                    name=p["tool"],
-                    arguments=p.get("arguments") or {},
-                )
-                for p in ready
-            ]
-            batch = await self.execute_parallel(calls, trace=trace)
-            for p, res in zip(ready, batch):
-                done[p["id"]] = res
-                results.append(res)
-                del remaining[p["id"]]
+            # Never run dependents after a failed prerequisite. Independent
+            # ready nodes still run; blocked nodes propagate failure downstream.
+            runnable = []
+            for p in ready:
+                failed_deps = [
+                    dep for dep in p.get("depends_on") or []
+                    if not done[dep].success
+                ]
+                if failed_deps:
+                    res = ToolResult(
+                        tool_call_id=p["id"],
+                        name=p["tool"],
+                        content={},
+                        success=False,
+                        error="dependency failed: " + ", ".join(failed_deps),
+                    )
+                    done[p["id"]] = res
+                    results.append(res)
+                    del remaining[p["id"]]
+                else:
+                    runnable.append(p)
+
+            if runnable:
+                calls = [
+                    ToolCall(
+                        id=p["id"],
+                        name=p["tool"],
+                        arguments=p.get("arguments") or {},
+                    )
+                    for p in runnable
+                ]
+                batch = await self.execute_parallel(calls, trace=trace)
+                for p, res in zip(runnable, batch):
+                    done[p["id"]] = res
+                    results.append(res)
+                    del remaining[p["id"]]
 
         return results
 

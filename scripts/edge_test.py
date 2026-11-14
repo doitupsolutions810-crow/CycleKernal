@@ -251,6 +251,21 @@ for label, invalid_plan in (
     status, _ = request(CHAT + "/v1/tools/execute_advanced", {"plan": invalid_plan}, "POST")
     check(label + " rejected", status == 422, f"status={status}")
 
+# Parsed function arguments must be objects, not scalar JSON or arrays.
+for label, arg_text in (
+    ("array", "[]"),
+    ("number", "42"),
+    ("boolean", "true"),
+    ("null", "null"),
+    ("string", '"text"'),
+):
+    for endpoint in ("/v1/tools/execute", "/v1/tools/execute_advanced"):
+        status, _ = request(CHAT + endpoint, {"tool_calls": [{
+            "id": "arg-" + label, "type": "function",
+            "function": {"name": "planning", "arguments": arg_text},
+        }]}, "POST")
+        check(f"parsed {label} args rejected on {endpoint}", status == 422, f"status={status}")
+
 # Batch limits and duplicate ids.
 def planning_call(i, call_id=None):
     return {"id": call_id or f"batch-{i}", "type": "function",
@@ -352,6 +367,68 @@ status, result = request(CHAT + "/v1/tools/execute_advanced", {"plan": [
     {"id": "second", "tool": "planning", "arguments": {"goal": "two"}, "depends_on": ["first"]},
 ]}, "POST")
 check("valid DAG chain succeeds", status == 200 and len(result.get("results", [])) == 2 and all(r.get("success") for r in result["results"]), result)
+
+# A failed prerequisite must block its dependents, while an independent
+# branch can finish. A blocked sensitive tool must not request approval.
+status, result = request(CHAT + "/v1/tools/execute_advanced", {"plan": [
+    {"id": "failed-root", "tool": "nonexistent_tool", "arguments": {}},
+    {"id": "blocked-exec", "tool": "terminal_execute",
+     "arguments": {"filename": "blocked.py", "content": "print('must not run')"},
+     "depends_on": ["failed-root"]},
+    {"id": "blocked-grandchild", "tool": "planning",
+     "arguments": {"goal": "must not run"}, "depends_on": ["blocked-exec"]},
+    {"id": "independent", "tool": "planning", "arguments": {"goal": "independent branch"}},
+]}, "POST")
+dag_results = {row.get("tool_call_id"): row for row in result.get("results", [])} if isinstance(result, dict) else {}
+check("DAG failure skips dependent and grandchild", status == 200
+      and all(dag_results.get(k, {}).get("success") is False for k in
+              ("failed-root", "blocked-exec", "blocked-grandchild"))
+      and "dependency failed" in dag_results.get("blocked-exec", {}).get("error", "")
+      and "dependency failed" in dag_results.get("blocked-grandchild", {}).get("error", "")
+      and "pending_approval" not in str(dag_results.get("blocked-exec", {})), dag_results)
+check("DAG independent node survives parent failure",
+      status == 200 and dag_results.get("independent", {}).get("success") is True,
+      dag_results.get("independent", {}))
+
+# Rate-limit, schema and approval early exits must not exhaust bulkheads.
+status, _ = request(CHAT + "/v1/bulkheads/planning/configure", {
+    "max_concurrent": 4, "max_queue": 0, "acquire_timeout_sec": 0.5,
+}, "POST")
+check("planning bulkhead reset for leak test", status == 200, f"status={status}")
+for i in range(12):
+    status, result = request(CHAT + "/v1/tools/execute_advanced", {
+        "tool_calls": [{"id": f"schema-deny-{i}", "type": "function",
+                        "function": {"name": "planning", "arguments": "{}"}}],
+    }, "POST")
+    check(f"schema rejection #{i} is structured", status == 200
+          and first(result).get("success") is False, first(result))
+status, pool = request(CHAT + "/v1/bulkheads")
+plan_pool = pool.get("bulkheads", {}).get("planning", {}) if isinstance(pool, dict) else {}
+check("schema and rate failures release planning slots",
+      status == 200 and plan_pool.get("metrics", {}).get("in_use") == 0
+      and plan_pool.get("available") == 4
+      and plan_pool.get("metrics", {}).get("accepted") == plan_pool.get("metrics", {}).get("completed"),
+      plan_pool)
+
+status, _ = request(CHAT + "/v1/bulkheads/terminal_execute/configure", {
+    "max_concurrent": 2, "max_queue": 0, "acquire_timeout_sec": 0.5,
+}, "POST")
+check("terminal bulkhead reset for approval leak test", status == 200, f"status={status}")
+for i in range(6):
+    status, result = request(CHAT + "/v1/tools/execute_advanced", {
+        "tool_calls": [{"id": "guard-" + uuid.uuid4().hex, "type": "function",
+                        "function": {"name": "terminal_execute",
+                                     "arguments": json.dumps({"filename": f"guard-{i}.py", "content": "print(1)"})}}],
+    }, "POST")
+    check(f"approval gate #{i} remains closed", status == 200
+          and first(result).get("error") == "pending_approval", first(result))
+status, pool = request(CHAT + "/v1/bulkheads")
+terminal_pool = pool.get("bulkheads", {}).get("terminal_execute", {}) if isinstance(pool, dict) else {}
+check("approval denials release terminal slots",
+      status == 200 and terminal_pool.get("metrics", {}).get("in_use") == 0
+      and terminal_pool.get("available") == 2
+      and terminal_pool.get("metrics", {}).get("accepted") == terminal_pool.get("metrics", {}).get("completed"),
+      terminal_pool)
 
 # Agents: repeated, concurrent execution must be stable and structured.
 def agent_run(i):
