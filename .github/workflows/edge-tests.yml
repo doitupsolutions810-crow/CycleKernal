@@ -65,6 +65,8 @@ jobs:
         run: docker compose exec -T chat python - < scripts/orchestrator_auth_test.py
       - name: Verify orchestrator failure propagation and recovery
         run: docker compose exec -T orchestrator python - < scripts/orchestrator_runtime_unit_tests.py
+      - name: Verify artifact path confinement and atomic agent writes
+        run: docker compose exec -T orchestrator python - < scripts/agent_artifact_path_tests.py
       - name: Verify legacy and advanced approval policy consistency
         run: docker compose exec -T chat python - < scripts/legacy_approval_unit_tests.py
       - name: Run deterministic randomized DAG and schema regressions
