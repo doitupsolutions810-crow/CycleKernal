@@ -126,6 +126,35 @@ class TerminalRuntimeTests(unittest.IsolatedAsyncioTestCase):
             (terminal.ARTIFACT_ROOT / "linkdir").unlink()
             external.rmdir()
 
+    async def test_symlink_leaf_inside_root_is_rejected(self):
+        victim = terminal.ARTIFACT_ROOT / "victim.py"
+        victim.write_text("print('original')")
+        alias = terminal.ARTIFACT_ROOT / "inside-link.py"
+        alias.symlink_to(victim)
+        with self.assertRaises(terminal.HTTPException) as caught:
+            await terminal.execute(self.req("inside-link.py", "print('tamper')"))
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertEqual(victim.read_text(), "print('original')")
+
+    async def test_symlink_directory_inside_root_is_rejected(self):
+        real = terminal.ARTIFACT_ROOT / "actual-dir"
+        real.mkdir()
+        (terminal.ARTIFACT_ROOT / "alias-dir").symlink_to(real, target_is_directory=True)
+        with self.assertRaises(terminal.HTTPException) as caught:
+            await terminal.execute(self.req("alias-dir/target.py", "print('tamper')"))
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertFalse((real / "target.py").exists())
+
+    async def test_concurrent_same_name_writes_never_leave_partial_scripts(self):
+        codes = [f"print('version-{i}')\\n" for i in range(8)]
+        outputs = await asyncio.gather(*[
+            terminal.execute(self.req("shared.py", code))
+            for code in codes
+        ])
+        self.assertTrue(all(out.exit_code == 0 for out in outputs), outputs)
+        self.assertIn((terminal.ARTIFACT_ROOT / "shared.py").read_text(), codes)
+        self.assertFalse(list(terminal.ARTIFACT_ROOT.glob(".ck-artifact-*")))
+
     async def test_nested_artifact_atomic_replacement(self):
         result_a = await terminal.execute(self.req("nested/a.py", "print('first')"))
         result_b = await terminal.execute(self.req("nested/a.py", "print('second')"))
