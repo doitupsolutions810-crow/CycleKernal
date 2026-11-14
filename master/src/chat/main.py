@@ -4,7 +4,8 @@ Conversational front-door with formal tool-calling protocol.
 """
 
 from __future__ import annotations
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
+import hmac
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
@@ -262,25 +263,37 @@ async def execute_tools_endpoint(payload: Dict[str, Any]):
     }
 
 
+def _require_approval_token(authorization: Optional[str]) -> None:
+    secret = os.getenv("CK_TOOL_APPROVAL_TOKEN", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="tool approvals are not configured")
+    if not authorization or not hmac.compare_digest(authorization, "Bearer " + secret):
+        raise HTTPException(status_code=403, detail="tool approval authorization required")
+
+
 @app.post("/v1/tools/approve")
-async def approve_tool(payload: Dict[str, Any]):
-    """Approve or deny a pending tool call (approval gate)."""
-    call_id = payload.get("call_id")
-    approve = bool(payload.get("approve", False))
-    if not call_id:
-        return {"error": "call_id required"}
+async def approve_tool(payload: Dict[str, Any], authorization: Optional[str] = Header(default=None)):
+    """Administrative approval decisions require a configured bearer secret."""
+    _require_approval_token(authorization)
+    call_id, approve = payload.get("call_id"), payload.get("approve")
+    if not isinstance(call_id, str) or not call_id or len(call_id) > 256:
+        raise HTTPException(status_code=422, detail="call_id must be nonempty string")
+    if not isinstance(approve, bool):
+        raise HTTPException(status_code=422, detail="approve must be boolean")
     entry = PENDING_APPROVALS.get(call_id)
     if not entry:
         return {"error": "unknown call_id", "call_id": call_id}
+    if entry.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="approval already decided")
     entry["status"] = "approved" if approve else "denied"
     entry["resolved_at"] = datetime.utcnow().isoformat()
     return {"call_id": call_id, "status": entry["status"]}
 
 
 @app.get("/v1/tools/pending")
-async def list_pending():
+async def list_pending(authorization: Optional[str] = Header(default=None)):
+    _require_approval_token(authorization)
     return {"pending": PENDING_APPROVALS}
-
 
 @app.post("/v1/tools/execute_advanced")
 async def execute_advanced(payload: Dict[str, Any]):

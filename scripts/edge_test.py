@@ -17,13 +17,13 @@ COLONY = BASE + "/api/colony"
 RESULTS: list[tuple[str, bool, str]] = []
 
 
-def request(url: str, body=None, method: str | None = None, timeout: float = 20):
+def request(url: str, body=None, method: str | None = None, timeout: float = 20, headers=None):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(
         url,
         data=data,
         method=method,
-        headers={"Content-Type": "application/json"} if data is not None else {},
+        headers={**({"Content-Type": "application/json"} if data is not None else {}), **(headers or {})},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
@@ -351,10 +351,23 @@ gated = first(result)
 gate_id = (gated.get("content") or {}).get("call_id")
 check("sensitive tool held for approval", status == 200 and (gated.get("content") or {}).get("status") == "pending_approval" and bool(gate_id), gated)
 if gate_id:
-    status, decision = request(CHAT + "/v1/tools/approve", {"call_id": gate_id, "approve": False}, "POST")
+    approval_headers = {"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]}
+    status, decision = request(CHAT + "/v1/tools/approve", {"call_id": gate_id, "approve": False}, "POST", headers=approval_headers)
+    check("decided approval cannot be reused", request(CHAT + "/v1/tools/approve",
+          {"call_id": gate_id, "approve": True}, "POST", headers=approval_headers)[0] == 409)
     check("approval can be denied", status == 200 and decision.get("status") == "denied", decision)
-status, decision = request(CHAT + "/v1/tools/approve", {"call_id": "never-issued-" + uuid.uuid4().hex[:6], "approve": True}, "POST")
+status, decision = request(CHAT + "/v1/tools/approve", {"call_id": "never-issued-" + uuid.uuid4().hex[:6], "approve": True}, "POST", headers={"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]})
 check("approval of unknown id is refused", status == 200 and "error" in decision, decision)
+
+approval_headers = {"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]}
+status, _ = request(CHAT + "/v1/tools/approve", {"call_id": "x", "approve": True}, "POST")
+check("unauthorized approval denied", status == 403, f"status={status}")
+status, _ = request(CHAT + "/v1/tools/pending")
+check("unauthorized pending approval list denied", status == 403, f"status={status}")
+status, data = request(CHAT + "/v1/tools/pending", headers=approval_headers)
+check("authorized approval queue readable", status == 200 and "pending" in data, f"status={status}")
+status, _ = request(CHAT + "/v1/tools/approve", {"call_id": "x", "approve": "yes"}, "POST", headers=approval_headers)
+check("non-boolean approval decision rejected", status == 422, f"status={status}")
 
 # DAG execution: cycle detection and a valid dependency chain.
 status, result = request(CHAT + "/v1/tools/execute_advanced", {"plan": [

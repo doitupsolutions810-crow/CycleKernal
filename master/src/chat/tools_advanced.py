@@ -246,33 +246,50 @@ PENDING_APPROVALS: Dict[str, Dict[str, Any]] = {}
 AUTO_APPROVE = False  # set True to skip gates (dev)
 
 
+APPROVAL_TTL_SECONDS = 600
+MAX_PENDING_APPROVALS = 1024
+
+
+def _approval_signature(call: ToolCall) -> str:
+    payload = json.dumps([call.name, call.arguments], sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 async def request_approval(call: ToolCall, trace: ToolTrace) -> bool:
-    """
-    Returns True if approved.
-    Default: auto-deny for requires_approval tools unless AUTO_APPROVE or
-    an external approver marks the call id.
-    """
+    """Bind approvals to one exact tool/arguments pair; consume only once."""
     if AUTO_APPROVE:
-        return True
-    # Check if already approved via /v1/tools/approve
+        return True  # Testing-only bypass; never enable in production.
+
+    now = time.time()
+    signature = _approval_signature(call)
     entry = PENDING_APPROVALS.get(call.id)
-    if entry and entry.get("status") == "approved":
-        return True
-    if entry and entry.get("status") == "denied":
+    if entry and now - entry.get("created_at", 0) > APPROVAL_TTL_SECONDS:
+        PENDING_APPROVALS.pop(call.id, None)
+        entry = None
+    if entry:
+        if entry.get("signature") != signature:
+            trace.event("approval_mismatch", tool=call.name, call_id=call.id)
+            return False
+        if entry.get("status") == "approved":
+            PENDING_APPROVALS.pop(call.id, None)
+            trace.event("approval_consumed", tool=call.name, call_id=call.id)
+            return True
         return False
 
+    # Eviction fails closed instead of growing a global unbounded queue.
+    if len(PENDING_APPROVALS) >= MAX_PENDING_APPROVALS:
+        oldest = min(PENDING_APPROVALS, key=lambda k: PENDING_APPROVALS[k].get("created_at", 0))
+        PENDING_APPROVALS.pop(oldest, None)
     PENDING_APPROVALS[call.id] = {
         "status": "pending",
         "tool": call.name,
         "arguments": call.arguments,
+        "signature": signature,
         "trace_id": trace.trace_id,
-        "created_at": time.time(),
+        "created_at": now,
     }
     trace.event("approval_requested", tool=call.name, call_id=call.id)
-    # Non-blocking protocol: caller may poll / approve. For sync path we deny
-    # until approved — advanced loop can wait briefly.
     return False
-
 
 # ---------------------------------------------------------------------------
 # Advanced executor

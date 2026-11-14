@@ -18,9 +18,10 @@ jobs:
       COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
       MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
-      EDGE_SOAK_REQUESTS: "2000"
-      EDGE_SOAK_WORKERS: "48"
-      EDGE_SOAK_SECONDS: "180"
+      EDGE_SOAK_REQUESTS: "3000"
+      EDGE_SOAK_WORKERS: "56"
+      EDGE_SOAK_SECONDS: "240"
+      CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack

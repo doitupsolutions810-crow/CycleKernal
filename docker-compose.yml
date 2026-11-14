@@ -123,6 +123,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      CK_TOOL_APPROVAL_TOKEN: ${CK_TOOL_APPROVAL_TOKEN:-}
     expose: ["8300"]
     depends_on:
       cognitive-bridge:

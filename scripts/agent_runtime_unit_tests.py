@@ -7,7 +7,7 @@ from bulkhead import BulkheadConfig, BulkheadRegistry
 from tools import ToolCall, ToolRegistry, ToolSpec
 from tools_advanced import (
     AdvancedToolRuntime, Middleware, PENDING_APPROVALS,
-    ToolPolicy, ToolTrace, validate_args,
+    ToolPolicy, ToolTrace, validate_args, request_approval, APPROVAL_TTL_SECONDS,
 )
 
 
@@ -152,6 +152,32 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(not x.success for x in results))
         self.assert_pool_clean(rt, name)
+
+    async def test_approval_cannot_be_reused_or_changed(self):
+        cid = "unit-exact-once-approval"
+        original = ToolCall(cid, "unit_gate", {"value": "safe"})
+        changed = ToolCall(cid, "unit_gate", {"value": "dangerous"})
+        try:
+            self.assertFalse(await request_approval(original, ToolTrace("bind")))
+            PENDING_APPROVALS[cid]["status"] = "approved"
+            self.assertFalse(await request_approval(changed, ToolTrace("bind")))
+            self.assertTrue(await request_approval(original, ToolTrace("bind")))
+            self.assertFalse(await request_approval(original, ToolTrace("bind")))
+            self.assertEqual(PENDING_APPROVALS[cid]["status"], "pending")
+        finally:
+            PENDING_APPROVALS.pop(cid, None)
+
+    async def test_approval_expiry_fails_closed(self):
+        cid = "unit-expired-approval"
+        tool = ToolCall(cid, "unit_gate", {"value": "safe"})
+        try:
+            self.assertFalse(await request_approval(tool, ToolTrace("expiry")))
+            PENDING_APPROVALS[cid]["status"] = "approved"
+            PENDING_APPROVALS[cid]["created_at"] -= APPROVAL_TTL_SECONDS + 1
+            self.assertFalse(await request_approval(tool, ToolTrace("expiry")))
+            self.assertEqual(PENDING_APPROVALS[cid]["status"], "pending")
+        finally:
+            PENDING_APPROVALS.pop(cid, None)
 
     def test_json_types_reject_bool_as_numeric(self):
         self.assertIsNotNone(validate_args({
