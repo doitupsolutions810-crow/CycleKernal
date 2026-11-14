@@ -146,7 +146,7 @@ class TerminalRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((real / "target.py").exists())
 
     async def test_concurrent_same_name_writes_never_leave_partial_scripts(self):
-        codes = [f"print('version-{i}')\\n" for i in range(8)]
+        codes = [f"print('version-{i}')\n" for i in range(8)]
         outputs = await asyncio.gather(*[
             terminal.execute(self.req("shared.py", code))
             for code in codes
