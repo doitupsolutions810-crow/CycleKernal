@@ -18,9 +18,9 @@ jobs:
       COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
       MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
-      EDGE_SOAK_REQUESTS: "4500"
-      EDGE_SOAK_WORKERS: "80"
-      EDGE_SOAK_SECONDS: "420"
+      EDGE_SOAK_REQUESTS: "5000"
+      EDGE_SOAK_WORKERS: "88"
+      EDGE_SOAK_SECONDS: "480"
       CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
       CK_TOOL_EXECUTION_TOKEN: ci-only-distinct-execution-token-not-for-production
       CK_TERMINAL_SERVICE_TOKEN: ci-only-third-terminal-service-secret
@@ -67,6 +67,8 @@ jobs:
         run: docker compose exec -T orchestrator python - < scripts/orchestrator_runtime_unit_tests.py
       - name: Verify legacy and advanced approval policy consistency
         run: docker compose exec -T chat python - < scripts/legacy_approval_unit_tests.py
+      - name: Run deterministic randomized DAG and schema regressions
+        run: docker compose exec -T chat python - < scripts/agent_dag_fuzz_tests.py
       - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
         run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
       - name: Run terminal process-tree and bounded-output tests
