@@ -34,23 +34,8 @@ scrape_configs:
           service: 'prometheus'
           component: 'monitoring'
 
-  # MongoDB exporter (if added later)
-  - job_name: 'mongodb'
-    static_configs:
-      - targets: ['mongodb-exporter:9216']
-        labels:
-          service: 'mongodb'
-          component: 'database'
-    scrape_interval: 30s
-
-  # Redis exporter (if added later)
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['redis-exporter:9121']
-        labels:
-          service: 'redis'
-          component: 'cache'
-    scrape_interval: 30s
+  # MongoDB and Redis exporters are intentionally not scraped until
+  # their exporter containers and endpoints have been deployed.
 
 # Alerting rules (can be extended)
 rule_files:

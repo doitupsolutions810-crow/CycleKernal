@@ -67,6 +67,20 @@ status, schemas = request(CHAT + "/v1/tools")
 known_tools = {item["function"]["name"] for item in schemas.get("tools", [])} if isinstance(schemas, dict) else set()
 check("tool schemas", status == 200 and {"spawn_agent", "sandbox_pipeline", "terminal_execute"} <= known_tools, sorted(known_tools))
 
+# The actual Prometheus 0.0.4 media type is required by Prometheus 3.x;
+# the Flask default text/html is rejected by current scrapers.
+try:
+    with urllib.request.urlopen(BASE + "/api/simulation/metrics", timeout=20) as res:
+        metrics_type = res.headers.get("Content-Type", "")
+        metrics_text = res.read().decode(errors="replace")
+        metrics_status = res.status
+except Exception as exc:
+    metrics_status, metrics_type, metrics_text = 0, "", repr(exc)
+check("simulation Prometheus exposition media type",
+      metrics_status == 200 and metrics_type.startswith("text/plain")
+      and "simulation_cycles_total" in metrics_text,
+      f"status={metrics_status} type={metrics_type} body={metrics_text[:120]}")
+
 # Chat request schema, modes, message/session boundaries.
 status, payload = request(CHAT + "/v1/chat", {})
 check("missing message validation", status == 422, f"status={status}")
