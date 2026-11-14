@@ -18,9 +18,9 @@ jobs:
       COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
       MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
-      EDGE_SOAK_REQUESTS: "3500"
-      EDGE_SOAK_WORKERS: "64"
-      EDGE_SOAK_SECONDS: "300"
+      EDGE_SOAK_REQUESTS: "4000"
+      EDGE_SOAK_WORKERS: "72"
+      EDGE_SOAK_SECONDS: "360"
       CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
       CK_TOOL_EXECUTION_TOKEN: ci-only-distinct-execution-token-not-for-production
       CK_TERMINAL_SERVICE_TOKEN: ci-only-third-terminal-service-secret

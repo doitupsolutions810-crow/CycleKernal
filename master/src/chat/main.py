@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Header
 import hmac
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 import httpx
 import logging
 import os
@@ -82,22 +82,23 @@ def _is_execution_authorized(authorization: Optional[str]) -> bool:
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None
+    # A client-supplied history may not impersonate an authoritative system turn.
+    role: Literal["user", "assistant", "tool"]
+    content: Optional[str] = Field(default=None, max_length=32768)
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=32)
+    tool_call_id: Optional[str] = Field(default=None, max_length=256)
+    name: Optional[str] = Field(default=None, max_length=128)
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=131072)
     session_id: str = Field(default="default", min_length=1, max_length=128)
     history: List[ChatMessage] = Field(default_factory=list, max_length=64)
     auto_spawn: bool = False  # Public chat is read-only unless explicitly authorized.
     use_tool_protocol: bool = True
-    max_rounds: int = 5
-    protocol_version: str = "v2"  # v1 | v2
-    tool_choice: str = "auto"  # auto | required | none
+    max_rounds: int = Field(default=5, ge=0, le=12)
+    protocol_version: str = Field(default="v2", max_length=16)  # v1 | v2
+    tool_choice: str = Field(default="auto", max_length=16)  # auto | required | none
 
 
 class ChatResponse(BaseModel):
