@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import main as orch
+from orchestrator import main as orch
 
 
 class Response:
