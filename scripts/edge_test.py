@@ -51,14 +51,30 @@ def check(name: str, condition: bool, details=""):
     RESULTS.append((name, bool(condition), str(details)[:240]))
 
 
+SENSITIVE_TOOLS = {"terminal_execute", "coding", "pipeline", "spawn_agent", "sandbox_pipeline"}
+
+
 def tool(name: str, args: dict, call_id: str | None = None, timeout=40):
-    return request(CHAT + "/v1/tools/execute", {
-        "tool_calls": [{
-            "id": call_id or uuid.uuid4().hex,
-            "type": "function",
-            "function": {"name": name, "arguments": json.dumps(args)},
-        }]
-    }, timeout=timeout)
+    # Explicit CI-only admin approval of known fixed test calls. The
+    # production runtime still fails closed until an approver acts.
+    payload = {"tool_calls": [{
+        "id": call_id or uuid.uuid4().hex,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args)},
+    }]}
+    status, result = request(CHAT + "/v1/tools/execute", payload, timeout=timeout)
+    if name not in SENSITIVE_TOOLS or status != 200:
+        return status, result
+    row = result.get("results", [{}])[0] if isinstance(result, dict) else {}
+    if row.get("error") != "pending_approval":
+        return status, result
+    approval_id = row.get("content", {}).get("call_id")
+    astatus, answer = request(CHAT + "/v1/tools/approve",
+        {"call_id": approval_id, "approve": True}, "POST",
+        headers={"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]})
+    if astatus != 200 or answer.get("status") != "approved":
+        return astatus, {"results": [{"success": False, "error": "CI approval failed", "detail": answer}]}
+    return request(CHAT + "/v1/tools/execute", payload, timeout=timeout)
 
 
 # Public vs operator authorization. No mutation or code execution is allowed
@@ -224,7 +240,62 @@ status, result = tool("terminal_execute", {
     "command": "python -c 'import time; time.sleep(4)'", "timeout_sec": 1,
 }, timeout=12)
 entry = result.get("results", [{}])[0] if isinstance(result, dict) else {}
-check("terminal timeout bounded", status == 200 and entry.get("success") is True and entry.get("content", {}).get("exit_code") == 124, entry)
+check("terminal timeout bounded and reported unsuccessful",
+      status == 200 and entry.get("success") is False
+      and entry.get("content", {}).get("exit_code") == 124, entry)
+
+# Sensitive tools require explicit one-use administrative approval even on
+# the legacy endpoint. Keep call id stable for the approved retry.
+approval_headers = {"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]}
+for index, sensitive in enumerate(sorted(SENSITIVE_TOOLS)):
+    arguments = (
+        {"content": "print('must-not-run')\n", "filename": f"legacy-block-{index}.py"}
+        if sensitive == "terminal_execute" else
+        {"agent": "reasoning"} if sensitive == "spawn_agent" else
+        {"goal": "do-not-run-without-approval", "host": False}
+    )
+    identifier = "legacy-gate-" + uuid.uuid4().hex[:12]
+    call_payload = {"tool_calls": [{
+        "id": identifier, "type": "function",
+        "function": {"name": sensitive, "arguments": json.dumps(arguments)},
+    }]}
+    status, response = request(CHAT + "/v1/tools/execute", call_payload, "POST")
+    row = (response.get("results") or [{}])[0] if isinstance(response, dict) else {}
+    check("v1 protected " + sensitive + " requires approval",
+          status == 200 and row.get("error") == "pending_approval"
+          and row.get("success") is False
+          and (row.get("content") or {}).get("call_id") == identifier, row)
+    # Explicitly deny these probes, including names that could dispatch code
+    # or host listeners. Do not execute them as part of a negative test.
+    status, answer = request(CHAT + "/v1/tools/approve",
+        {"call_id": identifier, "approve": False}, "POST", headers=approval_headers)
+    check("v1 denial " + sensitive, status == 200 and answer.get("status") == "denied", answer)
+
+# An approval bound to one argument payload cannot be moved to another.
+one_id = "v1-mismatch-" + uuid.uuid4().hex[:12]
+normal = {"filename": "v1-exact.py", "content": "print('v1-exact-ok')\n", "timeout_sec": 5}
+other = {"filename": "v1-exact.py", "content": "print('changed-content')\n", "timeout_sec": 5}
+def same_id_tool(args, endpoint="/v1/tools/execute"):
+    return request(CHAT + endpoint, {"tool_calls": [{
+        "id": one_id, "type": "function",
+        "function": {"name": "terminal_execute", "arguments": json.dumps(args)},
+    }]}, "POST", timeout=20)
+status, response = same_id_tool(normal)
+check("legacy approval requested", status == 200
+      and response["results"][0].get("error") == "pending_approval", response)
+status, answer = request(CHAT + "/v1/tools/approve",
+    {"call_id": one_id, "approve": True}, "POST", headers=approval_headers)
+check("legacy call approved for original content",
+      status == 200 and answer.get("status") == "approved", answer)
+status, response = same_id_tool(other)
+check("legacy changed content rejected without consuming approval",
+      status == 200 and response["results"][0].get("success") is False, response)
+status, response = same_id_tool(normal, "/v1/tools/execute_advanced")
+check("v2 can consume identical v1-approved call once",
+      status == 200 and response["results"][0].get("success") is True, response)
+status, response = same_id_tool(normal)
+check("legacy replay after consumption blocked",
+      status == 200 and response["results"][0].get("error") == "pending_approval", response)
 
 # Bulkhead bounds and API input validation.
 status, result = request(CHAT + "/v1/bulkheads/edge-test/configure", {

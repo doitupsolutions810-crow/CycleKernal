@@ -36,6 +36,7 @@ from tools import (
     ToolResult,
     ToolRegistry,
     ToolSpec,
+    tool_failure_reason,
     parse_tool_calls_from_message,
     tool_results_to_messages,
 )
@@ -86,8 +87,10 @@ DEFAULT_POLICIES: Dict[str, ToolPolicy] = {
     "research": ToolPolicy(timeout_sec=45, max_retries=2, rate_limit_per_min=20),
     "scrape": ToolPolicy(timeout_sec=40, max_retries=2, rate_limit_per_min=15),
     "planning": ToolPolicy(timeout_sec=10, max_retries=0),
-    "coding": ToolPolicy(timeout_sec=90, max_retries=1, rate_limit_per_min=10),
-    "pipeline": ToolPolicy(timeout_sec=120, max_retries=0, rate_limit_per_min=8),
+    "coding": ToolPolicy(timeout_sec=90, max_retries=0, rate_limit_per_min=10, requires_approval=True),
+    "pipeline": ToolPolicy(timeout_sec=120, max_retries=0, rate_limit_per_min=8, requires_approval=True),
+    "spawn_agent": ToolPolicy(timeout_sec=120, max_retries=0, rate_limit_per_min=30, requires_approval=True),
+    "sandbox_pipeline": ToolPolicy(timeout_sec=120, max_retries=0, rate_limit_per_min=8, requires_approval=True),
     "get_mood": ToolPolicy(timeout_sec=5, max_retries=1, rate_limit_per_min=60),
     "terminal_execute": ToolPolicy(
         timeout_sec=30,
@@ -426,6 +429,9 @@ class AdvancedToolRuntime:
                             spec.handler(call.arguments),
                             timeout=policy.timeout_sec,
                         )
+                        downstream_failure = tool_failure_reason(call.name, result_content)
+                        if downstream_failure:
+                            raise RuntimeError(downstream_failure)
                         result = ToolResult(
                             tool_call_id=call.id,
                             name=call.name,

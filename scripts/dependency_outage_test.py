@@ -11,11 +11,13 @@ base = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8080").rstrip("/
 mode = sys.argv[2] if len(sys.argv) > 2 else "recovered"
 chat = base + "/api/chat"
 
-def request(path, payload=None, authenticated=False):
+def request(path, payload=None, authenticated=False, token=None):
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json"} if body is not None else {}
     if authenticated:
         headers["Authorization"] = "Bearer " + os.environ["CK_TOOL_EXECUTION_TOKEN"]
+    if token is not None:
+        headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(chat + path, data=body, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
@@ -42,18 +44,25 @@ def assert_chat_healthy(expected_mood=None):
 
 
 def invoke_terminal():
-    return request("/v1/tools/execute", {
-        "tool_calls": [{
-            "id": uuid.uuid4().hex, "type": "function",
-            "function": {"name": "terminal_execute",
-                         "arguments": json.dumps({
-                             "filename": "fault-recovery.py",
-                             "content": "print('fault-recovery-ok')\n",
-                             "timeout_sec": 5,
-                         })}
-        }]
-    }, authenticated=True)
-
+    # The legacy endpoint shares one-use approval semantics with v2.
+    identifier = "outage-" + uuid.uuid4().hex
+    payload = {"tool_calls": [{
+        "id": identifier, "type": "function",
+        "function": {"name": "terminal_execute",
+                     "arguments": json.dumps({
+                         "filename": "fault-recovery.py",
+                         "content": "print('fault-recovery-ok')\n",
+                         "timeout_sec": 5,
+                     })}
+    }]}
+    status, pending = request("/v1/tools/execute", payload, authenticated=True)
+    rows = pending.get("results", [])
+    assert status == 200 and rows and rows[0].get("error") == "pending_approval", (status, pending)
+    status, decision = request("/v1/tools/approve",
+        {"call_id": identifier, "approve": True},
+        token=os.environ["CK_TOOL_APPROVAL_TOKEN"])
+    assert status == 200 and decision.get("status") == "approved", (status, decision)
+    return request("/v1/tools/execute", payload, authenticated=True)
 
 assert mode in ("bridge-down", "terminal-down", "recovered"), mode
 if mode == "bridge-down":

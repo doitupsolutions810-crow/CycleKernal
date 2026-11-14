@@ -170,6 +170,7 @@ async def _tool_coding(args: Dict[str, Any]) -> Dict[str, Any]:
         r = await c.post(
             f"{ORCH_URL}/v1/run",
             json={"goal": goal, "language": language, "auto_execute": True},
+            headers={"Authorization": "Bearer " + os.getenv("CK_TOOL_EXECUTION_TOKEN", "")},
         )
         if r.status_code == 200:
             return r.json()
@@ -182,6 +183,7 @@ async def _tool_pipeline(args: Dict[str, Any]) -> Dict[str, Any]:
         r = await c.post(
             f"{ORCH_URL}/v1/run",
             json={"goal": goal, "auto_execute": True},
+            headers={"Authorization": "Bearer " + os.getenv("CK_TOOL_EXECUTION_TOKEN", "")},
         )
         if r.status_code == 200:
             return r.json()
@@ -225,6 +227,24 @@ async def _tool_terminal_execute(args: Dict[str, Any]) -> Dict[str, Any]:
 # Registry
 # ---------------------------------------------------------------------------
 
+def tool_failure_reason(name: str, result: Any) -> Optional[str]:
+    """Keep both tool protocols consistent with downstream execution failures."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("error"):
+        return str(result["error"])
+    if result.get("success") is False:
+        return str(result.get("message") or "tool reported unsuccessful execution")
+    if name == "terminal_execute" and "exit_code" in result:
+        code = result["exit_code"]
+        if type(code) is not int or code != 0:
+            return f"terminal returned unsuccessful exit code: {code!r}"
+    status = result.get("status_code")
+    if type(status) is int and status >= 400:
+        return f"downstream HTTP {status}"
+    return None
+
+
 class ToolRegistry:
     def __init__(self):
         self._tools: Dict[str, ToolSpec] = {}
@@ -260,12 +280,31 @@ class ToolRegistry:
                     success=False,
                     error=f"missing required args: {missing}",
                 )
+            # v1 and v2 share policy and one-use, argument-bound approvals.
+            from tools_advanced import DEFAULT_POLICIES, request_approval, ToolTrace, new_trace_id, validate_args
+            policy = DEFAULT_POLICIES.get(call.name)
+            if policy and policy.requires_approval:
+                violation = validate_args(spec.parameters or {}, call.arguments)
+                if violation:
+                    return ToolResult(
+                        tool_call_id=call.id, name=call.name, content={},
+                        success=False, error=f"schema validation: {violation}",
+                    )
+                if not await request_approval(call, ToolTrace(new_trace_id())):
+                    return ToolResult(
+                        tool_call_id=call.id, name=call.name,
+                        content={"status": "pending_approval", "call_id": call.id},
+                        success=False, error="pending_approval",
+                    )
             result = await spec.handler(call.arguments)
+            content = result if isinstance(result, dict) else {"result": result}
+            failure = tool_failure_reason(call.name, content)
             return ToolResult(
                 tool_call_id=call.id,
                 name=call.name,
-                content=result if isinstance(result, dict) else {"result": result},
-                success=True,
+                content=content,
+                success=failure is None,
+                error=failure,
             )
         except Exception as e:
             logger.exception(f"tool {call.name} failed")
