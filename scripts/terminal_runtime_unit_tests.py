@@ -100,6 +100,39 @@ class TerminalRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await task
         await self.assert_child_terminated(pidfile)
 
+    async def test_symlink_leaf_does_not_overwrite_external_file(self):
+        external = Path(self.tmp.name).parent / ("ck-outside-" + self.tmp.name.rsplit("/", 1)[-1])
+        external.write_text("preserve")
+        (terminal.ARTIFACT_ROOT / "linked.py").symlink_to(external)
+        try:
+            with self.assertRaises(terminal.HTTPException) as error:
+                await terminal.execute(self.req("linked.py", "print('changed')"))
+            self.assertEqual(error.exception.status_code, 400)
+            self.assertEqual(external.read_text(), "preserve")
+        finally:
+            (terminal.ARTIFACT_ROOT / "linked.py").unlink()
+            external.unlink()
+
+    async def test_symlink_parent_is_not_followed(self):
+        external = Path(self.tmp.name).parent / ("ck-parent-" + self.tmp.name.rsplit("/", 1)[-1])
+        external.mkdir()
+        (terminal.ARTIFACT_ROOT / "linkdir").symlink_to(external, target_is_directory=True)
+        try:
+            with self.assertRaises(terminal.HTTPException) as error:
+                await terminal.execute(self.req("linkdir/code.py", "print('changed')"))
+            self.assertEqual(error.exception.status_code, 400)
+            self.assertFalse((external / "code.py").exists())
+        finally:
+            (terminal.ARTIFACT_ROOT / "linkdir").unlink()
+            external.rmdir()
+
+    async def test_nested_artifact_atomic_replacement(self):
+        result_a = await terminal.execute(self.req("nested/a.py", "print('first')"))
+        result_b = await terminal.execute(self.req("nested/a.py", "print('second')"))
+        self.assertEqual((result_a.exit_code, result_b.exit_code), (0, 0))
+        self.assertEqual((terminal.ARTIFACT_ROOT / "nested/a.py").read_text(), "print('second')")
+        self.assertFalse(list(terminal.ARTIFACT_ROOT.rglob(".ck-artifact-*")))
+
     async def test_nonzero_exit_and_stderr_retained(self):
         out = await terminal.execute(self.req(
             "failure.py", "import sys;sys.stderr.write('intentional');sys.exit(7)\n"

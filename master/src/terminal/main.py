@@ -12,6 +12,8 @@ import os
 import signal
 import sys
 import logging
+import stat
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -56,6 +58,64 @@ async def _cleanup_group(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
+def _safe_write_artifact(root: Path, filename: str, content: str) -> Path:
+    """Open each parent without following symlinks, then atomically install file.
+
+    dir_fd operations prevent traversing pre-existing symlink directories and
+    os.replace() never follows a symlink leaf. This is filesystem hardening,
+    not an isolated per-execution virtual machine.
+    """
+    parts = Path(filename).parts
+    if not parts or any(piece in ("", ".", "..") for piece in parts):
+        raise HTTPException(400, "invalid artifact path")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(str(root), directory_flags)
+    current_fd = root_fd
+    tmp_name = None
+    try:
+        for piece in parts[:-1]:
+            try:
+                os.mkdir(piece, 0o700, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            next_fd = os.open(piece, directory_flags, dir_fd=current_fd)
+            if current_fd != root_fd:
+                os.close(current_fd)
+            current_fd = next_fd
+
+        try:
+            info = os.stat(parts[-1], dir_fd=current_fd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                raise HTTPException(400, "invalid artifact target")
+        except FileNotFoundError:
+            pass
+
+        tmp_name = ".ck-artifact-" + uuid.uuid4().hex
+        fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=current_fd)
+        with os.fdopen(fd, "wb") as output:
+            output.write(content.encode("utf-8"))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(tmp_name, parts[-1], src_dir_fd=current_fd, dst_dir_fd=current_fd)
+        tmp_name = None
+        return root.joinpath(*parts)
+    except HTTPException:
+        raise
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, "invalid artifact path") from exc
+    finally:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name, dir_fd=current_fd)
+            except FileNotFoundError:
+                pass
+        if current_fd != root_fd:
+            os.close(current_fd)
+        os.close(root_fd)
+
+
 class ExecuteRequest(BaseModel):
     filename: str
     content: str
@@ -96,8 +156,7 @@ async def execute(req: ExecuteRequest):
         raise HTTPException(422, "timeout_sec must be between 1 and 120")
     if len(req.content.encode("utf-8")) > MAX_SOURCE_BYTES:
         raise HTTPException(413, "artifact source exceeds 2 MB limit")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(req.content, encoding="utf-8")
+    target = _safe_write_artifact(root, req.filename, req.content)
     logger.info("Artifact written: %s", target)
     started = datetime.utcnow()
 
