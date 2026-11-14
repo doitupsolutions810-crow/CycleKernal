@@ -3,7 +3,7 @@
 import asyncio
 import unittest
 
-from bulkhead import BulkheadConfig, BulkheadRegistry
+from bulkhead import Bulkhead, BulkheadConfig, BulkheadRegistry
 from tools import ToolCall, ToolRegistry, ToolSpec
 from tools_advanced import (
     AdvancedToolRuntime, Middleware, PENDING_APPROVALS,
@@ -50,6 +50,76 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["metrics"]["in_use"], 0, state)
         self.assertEqual(state["available"], capacity, state)
         self.assertEqual(state["metrics"]["accepted"], state["metrics"]["completed"], state)
+
+    async def test_cancelled_queued_acquire_releases_waiter(self):
+        pool = Bulkhead("queue_cancel", BulkheadConfig(
+            max_concurrent=1, max_queue=1, acquire_timeout_sec=2.0,
+        ))
+        self.assertTrue(await pool.acquire())
+        waiter = asyncio.create_task(pool.acquire())
+        for _ in range(20):
+            if pool.snapshot()["waiters"] == 1:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(pool.snapshot()["waiters"], 1)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.assertEqual(pool.snapshot()["waiters"], 0)
+        await pool.release()
+        self.assertTrue(await pool.acquire())
+        await pool.release()
+        state = pool.snapshot()
+        self.assertEqual((state["available"], state["metrics"]["in_use"]), (1, 0))
+
+    async def test_queued_timeout_and_recovery(self):
+        pool = Bulkhead("queue_timeout", BulkheadConfig(
+            max_concurrent=1, max_queue=1, acquire_timeout_sec=0.02,
+        ))
+        self.assertTrue(await pool.acquire())
+        self.assertFalse(await pool.acquire())
+        self.assertEqual(pool.snapshot()["waiters"], 0)
+        await pool.release()
+        self.assertTrue(await pool.acquire())
+        await pool.release()
+        self.assertEqual(pool.snapshot()["available"], 1)
+
+    async def test_context_manager_is_task_local_under_interleaving(self):
+        pool = Bulkhead("context_race", BulkheadConfig(
+            max_concurrent=1, max_queue=0, acquire_timeout_sec=0.1,
+        ))
+        first_inside = asyncio.Event()
+        denied_inside = asyncio.Event()
+        release_first = asyncio.Event()
+        release_denied = asyncio.Event()
+
+        async def admitted():
+            async with pool as accepted:
+                self.assertTrue(accepted)
+                first_inside.set()
+                await release_first.wait()
+
+        async def rejected():
+            await first_inside.wait()
+            async with pool as accepted:
+                self.assertFalse(accepted)
+                denied_inside.set()
+                await release_denied.wait()
+
+        task_one = asyncio.create_task(admitted())
+        task_two = asyncio.create_task(rejected())
+        try:
+            await asyncio.wait_for(denied_inside.wait(), timeout=2)
+            release_first.set()
+            await asyncio.wait_for(task_one, timeout=2)
+            self.assertEqual(pool.snapshot()["metrics"]["in_use"], 0)
+            self.assertEqual(pool.snapshot()["available"], 1)
+        finally:
+            release_first.set()
+            release_denied.set()
+            await asyncio.gather(task_one, task_two, return_exceptions=True)
+        self.assertEqual(pool.snapshot()["available"], 1)
+        self.assertEqual(pool.snapshot()["metrics"]["in_use"], 0)
 
     async def test_unknown_tools_do_not_allocate_global_capacity_state(self):
         name = "unit_known"

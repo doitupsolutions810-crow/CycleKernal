@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from contextvars import ContextVar
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -84,7 +85,9 @@ class Bulkhead:
         self._waiters: int = 0
         self.metrics = BulkheadMetrics()
         self._lock: asyncio.Lock = asyncio.Lock()
-        self._cm_stack: List[bool] = []
+        self._cm_stack: ContextVar[tuple[bool, ...]] = ContextVar(
+            f"bulkhead_{name}_context_stack", default=()
+        )
 
     async def acquire(self) -> bool:
         """
@@ -120,26 +123,36 @@ class Bulkhead:
                 return False
             self._waiters += 1
 
+        acquired = False
         try:
             await asyncio.wait_for(
                 self._sem.acquire(),
                 timeout=cfg.acquire_timeout_sec,
             )
+            acquired = True
+            async with self._lock:
+                self._waiters = max(0, self._waiters - 1)
+                self.metrics.in_use += 1
+                self.metrics.peak_in_use = max(
+                    self.metrics.peak_in_use, self.metrics.in_use
+                )
+                self.metrics.accepted += 1
+                self.metrics.total_wait_ms += (time.time() - start) * 1000.0
+            return True
         except asyncio.TimeoutError:
             async with self._lock:
                 self._waiters = max(0, self._waiters - 1)
                 self.metrics.rejected += 1
             return False
-
-        async with self._lock:
-            self._waiters = max(0, self._waiters - 1)
-            self.metrics.in_use += 1
-            self.metrics.peak_in_use = max(
-                self.metrics.peak_in_use, self.metrics.in_use
-            )
-            self.metrics.accepted += 1
-            self.metrics.total_wait_ms += (time.time() - start) * 1000.0
-        return True
+        except BaseException:
+            # Cancelled queued tasks must vacate their waiter reservation.
+            # If the semaphore was acquired but accounting was interrupted,
+            # return the slot rather than blocking all subsequent requests.
+            async with self._lock:
+                self._waiters = max(0, self._waiters - 1)
+            if acquired:
+                self._sem.release()
+            raise
 
     async def try_acquire(self) -> bool:
         """Non-blocking acquire (no queue wait)."""
@@ -167,7 +180,8 @@ class Bulkhead:
     async def __aenter__(self) -> bool:
         """Acquire a slot. Returns True if acquired, False if rejected."""
         acquired: bool = await self.acquire()
-        self._cm_stack.append(acquired)
+        stack = self._cm_stack.get()
+        self._cm_stack.set((*stack, acquired))
         return acquired
 
     async def __aexit__(
@@ -177,9 +191,11 @@ class Bulkhead:
         tb: Optional[TracebackType],
     ) -> None:
         """Release only if this context successfully acquired a slot."""
-        if not self._cm_stack:
+        stack = self._cm_stack.get()
+        if not stack:
             return None
-        acquired: bool = self._cm_stack.pop()
+        acquired = stack[-1]
+        self._cm_stack.set(stack[:-1])
         if acquired:
             await self.release()
         return None
