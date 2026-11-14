@@ -17,13 +17,16 @@ COLONY = BASE + "/api/colony"
 RESULTS: list[tuple[str, bool, str]] = []
 
 
-def request(url: str, body=None, method: str | None = None, timeout: float = 20, headers=None):
+def request(url: str, body=None, method: str | None = None, timeout: float = 20, headers=None, authenticated=True):
+    headers = dict(headers or {})
+    if authenticated and url.startswith(CHAT + "/") and "Authorization" not in headers:
+        headers["Authorization"] = "Bearer " + os.environ["CK_TOOL_EXECUTION_TOKEN"]
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(
         url,
         data=data,
         method=method,
-        headers={**({"Content-Type": "application/json"} if data is not None else {}), **(headers or {})},
+        headers={**({"Content-Type": "application/json"} if data is not None else {}), **headers},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
@@ -57,6 +60,47 @@ def tool(name: str, args: dict, call_id: str | None = None, timeout=40):
         }]
     }, timeout=timeout)
 
+
+# Public vs operator authorization. No mutation or code execution is allowed
+# through the public frontend without a separate execution credential.
+operator = {"Authorization": "Bearer " + os.environ["CK_TOOL_EXECUTION_TOKEN"]}
+approver = {"Authorization": "Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]}
+example_call = {"tool_calls": [{
+    "id": "unauth-probe",
+    "type": "function",
+    "function": {"name": "planning", "arguments": "{}"},
+}]}
+for endpoint in ("/v1/tools/execute", "/v1/tools/execute_advanced"):
+    status, _ = request(CHAT + endpoint, example_call, "POST", authenticated=False)
+    check("unauthorized " + endpoint + " blocked", status == 403, f"status={status}")
+    status, _ = request(CHAT + endpoint, example_call, "POST", headers=approver)
+    check("approval token cannot execute on " + endpoint, status == 403, f"status={status}")
+status, _ = request(CHAT + "/v1/chat", {
+    "message": "do not spawn tools", "auto_spawn": True, "use_tool_protocol": False,
+}, "POST", authenticated=False)
+check("unauthorized agent auto-spawn blocked", status == 403, f"status={status}")
+status, msg = request(CHAT + "/v1/chat", {
+    "message": "public chat read-only", "auto_spawn": False, "use_tool_protocol": False,
+}, "POST", authenticated=False)
+check("public read-only chat available", status == 200 and bool(msg.get("reply")), f"status={status}")
+status, msg = request(CHAT + "/v1/chat", {
+    "message": "public default read-only",
+}, "POST", authenticated=False)
+check("public default chat does not auto-spawn", status == 200 and bool(msg.get("reply")), f"status={status}")
+status, _ = request(CHAT + "/v1/scrape", {"urls": ["https://example.com"]}, "POST", authenticated=False)
+check("unauthorized scraper blocked", status == 403, f"status={status}")
+for endpoint, body in (
+    ("/v1/circuits/planning/open", {"reason": "should not execute"}),
+    ("/v1/circuits/planning/close", {}),
+    ("/v1/circuits/reset", {}),
+    ("/v1/bulkheads/planning/configure", {"max_concurrent": 1}),
+):
+    status, _ = request(CHAT + endpoint, body, "POST", authenticated=False)
+    check("unauthorized mutation " + endpoint + " blocked", status == 403, f"status={status}")
+status, _ = request(CHAT + "/v1/tools/approve", {
+    "call_id": "nope", "approve": True,
+}, "POST", headers=operator)
+check("execution token cannot approve tools", status == 403, f"status={status}")
 
 # Health, schema, and dependency API checks.
 for path in ("/health", "/api/simulation/health", "/api/monitoring/health", "/api/colony/health"):

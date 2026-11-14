@@ -58,7 +58,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
     history: List[ChatMessage] = Field(default_factory=list)
-    auto_spawn: bool = True
+    auto_spawn: bool = False  # Public chat is read-only unless explicitly authorized.
     use_tool_protocol: bool = True
     max_rounds: int = 5
     protocol_version: str = "v2"  # v1 | v2
@@ -135,7 +135,9 @@ async def list_tools():
 
 
 @app.post("/v1/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, authorization: Optional[str] = Header(default=None)):
+    if req.auto_spawn:
+        _require_execution_token(authorization)
     mood_data = await get_mood()
     mood = mood_data.get("mood", "neutral")
 
@@ -229,7 +231,8 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/v1/scrape")
-async def scrape_endpoint(payload: Dict[str, Any]):
+async def scrape_endpoint(payload: Dict[str, Any], authorization: Optional[str] = Header(default=None)):
+    _require_execution_token(authorization)
     urls = payload.get("urls") or []
     query = payload.get("query") or ""
     if not urls:
@@ -238,13 +241,14 @@ async def scrape_endpoint(payload: Dict[str, Any]):
 
 
 @app.post("/v1/tools/execute")
-async def execute_tools_endpoint(payload: Dict[str, Any]):
+async def execute_tools_endpoint(payload: Dict[str, Any], authorization: Optional[str] = Header(default=None)):
     """
     Direct protocol endpoint: accept OpenAI-style tool_calls and return tool results.
     Body: { "tool_calls": [ {id, type, function: {name, arguments}} ] }
     """
     from tools import tool_results_to_messages
 
+    _require_execution_token(authorization)
     calls = _parse_tool_calls(payload)
     results = await execute_tool_calls(calls)
     return {
@@ -261,6 +265,15 @@ async def execute_tools_endpoint(payload: Dict[str, Any]):
         ],
         "messages": tool_results_to_messages(results),
     }
+
+
+def _require_execution_token(authorization: Optional[str]) -> None:
+    """Separate trusted operator tool execution from public chat and approvals."""
+    secret = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="privileged tool execution is not configured")
+    if not authorization or not hmac.compare_digest(authorization, "Bearer " + secret):
+        raise HTTPException(status_code=403, detail="tool execution authorization required")
 
 
 def _require_approval_token(authorization: Optional[str]) -> None:
@@ -296,7 +309,7 @@ async def list_pending(authorization: Optional[str] = Header(default=None)):
     return {"pending": PENDING_APPROVALS}
 
 @app.post("/v1/tools/execute_advanced")
-async def execute_advanced(payload: Dict[str, Any]):
+async def execute_advanced(payload: Dict[str, Any], authorization: Optional[str] = Header(default=None)):
     """
     Advanced parallel / DAG execution.
     Body:
@@ -306,6 +319,7 @@ async def execute_advanced(payload: Dict[str, Any]):
         "plan": [ {"id","tool","arguments","depends_on"} ]  # optional DAG
       }
     """
+    _require_execution_token(authorization)
     from tools_advanced import tool_results_to_messages  # noqa — same helper from tools
     from tools import tool_results_to_messages as v1_msgs
 
@@ -377,21 +391,24 @@ async def circuit_status():
 
 
 @app.post("/v1/circuits/{tool_name}/open")
-async def circuit_force_open(tool_name: str, payload: Dict[str, Any] = None):
+async def circuit_force_open(tool_name: str, payload: Dict[str, Any] = None, authorization: Optional[str] = Header(default=None)):
+    _require_execution_token(authorization)
     payload = payload or {}
     await BREAKERS.force_open(tool_name, reason=payload.get("reason", "manual"))
     return {"tool": tool_name, "action": "force_open", "status": BREAKERS.status().get(tool_name)}
 
 
 @app.post("/v1/circuits/{tool_name}/close")
-async def circuit_force_close(tool_name: str, payload: Dict[str, Any] = None):
+async def circuit_force_close(tool_name: str, payload: Dict[str, Any] = None, authorization: Optional[str] = Header(default=None)):
+    _require_execution_token(authorization)
     payload = payload or {}
     await BREAKERS.force_close(tool_name, reason=payload.get("reason", "manual"))
     return {"tool": tool_name, "action": "force_close", "status": BREAKERS.status().get(tool_name)}
 
 
 @app.post("/v1/circuits/reset")
-async def circuit_reset_all():
+async def circuit_reset_all(authorization: Optional[str] = Header(default=None)):
+    _require_execution_token(authorization)
     await BREAKERS.reset_all()
     return {"action": "reset_all", "circuits": BREAKERS.status()}
 
@@ -403,7 +420,8 @@ async def bulkhead_status():
 
 
 @app.post("/v1/bulkheads/{tool_name}/configure")
-async def bulkhead_configure(tool_name: str, payload: Dict[str, Any]):
+async def bulkhead_configure(tool_name: str, payload: Dict[str, Any], authorization: Optional[str] = Header(default=None)):
+    _require_execution_token(authorization)
     try:
         BULKHEADS.configure(
             tool_name,

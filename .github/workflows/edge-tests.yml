@@ -22,6 +22,7 @@ jobs:
       EDGE_SOAK_WORKERS: "56"
       EDGE_SOAK_SECONDS: "240"
       CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
+      CK_TOOL_EXECUTION_TOKEN: ci-only-distinct-execution-token-not-for-production
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack
@@ -50,6 +51,8 @@ jobs:
           set -euo pipefail
           grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/apply-secrets.sh
           grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/secret-values.template.yaml
+          grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/secret-values.template.yaml
           grep -q "secretRef: {name: cyclekernel-secrets}" k8s/cyclekernel.yaml
       - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
         run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py

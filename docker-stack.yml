@@ -85,6 +85,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
       CK_TOOL_APPROVAL_TOKEN: ${CK_TOOL_APPROVAL_TOKEN:?Set CK_TOOL_APPROVAL_TOKEN}
+      CK_TOOL_EXECUTION_TOKEN: ${CK_TOOL_EXECUTION_TOKEN:?Set CK_TOOL_EXECUTION_TOKEN}
     networks: [app, runner]
     deploy:
       replicas: 1

@@ -16,7 +16,7 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
         continue
     key, value = line.split('=', 1)
     values[key] = value
-required = ('MONGO_INITDB_ROOT_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'CK_TOOL_APPROVAL_TOKEN')
+required = ('MONGO_INITDB_ROOT_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'CK_TOOL_APPROVAL_TOKEN', 'CK_TOOL_EXECUTION_TOKEN')
 missing = [key for key in required if not values.get(key)]
 if missing:
     raise SystemExit('Missing required secret keys: ' + ', '.join(missing))
@@ -33,6 +33,7 @@ secret = {
         'LLM_API_KEY': base64.b64encode(values.get('LLM_API_KEY', '').encode()).decode(),
         'LLM_MODEL': base64.b64encode(values.get('LLM_MODEL', 'gpt-4o-mini').encode()).decode(),
         'CK_TOOL_APPROVAL_TOKEN': base64.b64encode(values['CK_TOOL_APPROVAL_TOKEN'].encode()).decode(),
+        'CK_TOOL_EXECUTION_TOKEN': base64.b64encode(values['CK_TOOL_EXECUTION_TOKEN'].encode()).decode(),
     },
 }
 print(json.dumps(secret))
