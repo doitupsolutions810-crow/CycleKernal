@@ -29,16 +29,17 @@ class ArtifactPathTests(unittest.IsolatedAsyncioTestCase):
         self.base = Path(self.tmp.name)
         self.root = self.base / "artifacts"
         self.root.mkdir()
-        self.run_id = STARTED.strftime("%Y%m%dT%H%M%S")
+        self.run_id = STARTED.strftime("%Y%m%dT%H%M%S") + "-deadbeef"
         self.root_patch = patch.object(artifact, "ARTIFACT_ROOT", self.root)
         self.clock_patch = patch.object(artifact, "datetime", FixedClock)
+        self.random_patch = patch.object(artifact.secrets, "token_hex", return_value="deadbeef")
         self.mood_patch = patch.object(artifact.ArtifactAgent, "current_mood",
                                        new=AsyncMock(return_value={"mood": "neutral"}))
-        for patcher in (self.root_patch, self.clock_patch, self.mood_patch):
+        for patcher in (self.root_patch, self.clock_patch, self.random_patch, self.mood_patch):
             patcher.start()
 
     def tearDown(self):
-        for patcher in (self.mood_patch, self.clock_patch, self.root_patch):
+        for patcher in (self.mood_patch, self.random_patch, self.clock_patch, self.root_patch):
             patcher.stop()
         self.tmp.cleanup()
 
@@ -79,6 +80,61 @@ class ArtifactPathTests(unittest.IsolatedAsyncioTestCase):
                         "files": [{"path": path, "content": "must-not-write"}],
                     })
         self.assertFalse((self.base / "outside").exists())
+
+    async def test_same_name_concurrent_runs_use_independent_directories(self):
+        with patch.object(artifact.secrets, "token_hex",
+                          side_effect=("11223344", "55667788")):
+            first, second = await asyncio.gather(
+                self.run_artifact({
+                    "name": "same_name",
+                    "files": [{"path": "data.txt", "content": "alpha"}],
+                }),
+                self.run_artifact({
+                    "name": "same_name",
+                    "files": [{"path": "data.txt", "content": "beta"}],
+                }),
+            )
+        first_path = Path(first.output["artifact_root"])
+        second_path = Path(second.output["artifact_root"])
+        self.assertNotEqual(first_path, second_path)
+        self.assertEqual((first_path / "data.txt").read_text(), "alpha")
+        self.assertEqual((second_path / "data.txt").read_text(), "beta")
+
+    async def test_preflight_rejects_late_invalid_path_without_partial_artifact(self):
+        with self.assertRaises(ValueError):
+            await self.run_artifact({
+                "name": "no_partial",
+                "files": [
+                    {"path": "good.txt", "content": "must-not-commit"},
+                    {"path": "../evil.txt", "content": "untrusted"},
+                ],
+            })
+        self.assertFalse((self.root / self.run_id / "no_partial").exists())
+
+    async def test_file_count_and_size_quotas_reject_without_writing(self):
+        with patch.object(artifact, "MAX_ARTIFACT_FILES", 2):
+            with self.assertRaises(ValueError):
+                await self.run_artifact({
+                    "name": "too_many",
+                    "files": [{"path": f"{i}.txt", "content": "x"} for i in range(3)],
+                })
+        with patch.object(artifact, "MAX_SINGLE_ARTIFACT_BYTES", 5):
+            with self.assertRaises(ValueError):
+                await self.run_artifact({
+                    "name": "too_large_file",
+                    "files": [{"path": "large.txt", "content": "xxxxxx"}],
+                })
+        with patch.object(artifact, "MAX_TOTAL_ARTIFACT_BYTES", 10):
+            with self.assertRaises(ValueError):
+                await self.run_artifact({
+                    "name": "too_large_total",
+                    "files": [
+                        {"path": "a.txt", "content": "123456"},
+                        {"path": "b.txt", "content": "123456"},
+                    ],
+                })
+        for name in ("too_many", "too_large_file", "too_large_total"):
+            self.assertFalse((self.root / self.run_id / name).exists())
 
     async def test_symlink_leaf_cannot_overwrite_external_file(self):
         outside = self.base / "outside.txt"

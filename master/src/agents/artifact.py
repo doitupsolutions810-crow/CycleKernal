@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import shlex
 import textwrap
 from datetime import datetime
@@ -18,12 +19,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .base import AgentResult, BaseAgent
-from .path_safety import artifact_directory, validate_name, write_artifact
+from .path_safety import artifact_directory, validate_name, validate_relative_path, write_artifact
 
 logger = logging.getLogger("ck.artifact")
 
 # Sandbox root — never write outside this tree
 ARTIFACT_ROOT = Path(os.environ.get("CK_ARTIFACT_ROOT", "/tmp/ck-artifacts"))
+MAX_ARTIFACT_FILES = 64
+MAX_SINGLE_ARTIFACT_BYTES = 2_000_000
+MAX_TOTAL_ARTIFACT_BYTES = 8_000_000
 
 
 class ArtifactAgent(BaseAgent):
@@ -65,14 +69,30 @@ class ArtifactAgent(BaseAgent):
                     '''),
             }]
 
-        run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        # Validate the entire request before writing any files: no partial
+        # artifacts from a malformed later entry, and bounded space usage.
+        if len(files) > MAX_ARTIFACT_FILES:
+            raise ValueError("too many files in artifact request")
+        prepared: List[tuple[str, str]] = []
+        total_bytes = 0
+        for file_data in files:
+            if not isinstance(file_data, dict):
+                raise ValueError("artifact file entry must be an object")
+            rel = file_data.get("path") or file_data.get("filename") or "file.txt"
+            validate_relative_path(rel)
+            data = file_data.get("content") if file_data.get("content") is not None else ""
+            if not isinstance(data, str):
+                raise ValueError("artifact file content must be text")
+            file_bytes = len(data.encode("utf-8"))
+            total_bytes += file_bytes
+            if file_bytes > MAX_SINGLE_ARTIFACT_BYTES or total_bytes > MAX_TOTAL_ARTIFACT_BYTES:
+                raise ValueError("artifact source size limit exceeded")
+            prepared.append((rel, data))
+
+        run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(4)
         with artifact_directory(ARTIFACT_ROOT, run_id, name) as (dest, directory_fd):
             written: List[Dict[str, Any]] = []
-            for f in files:
-                rel = f.get("path") or f.get("filename") or "file.txt"
-                # Do not silently rewrite traversal strings. Reject them so
-                # no caller mistakes a sanitized path for the requested one.
-                data = f.get("content") if f.get("content") is not None else ""
+            for rel, data in prepared:
                 byte_count = write_artifact(directory_fd, rel, data)
                 digest = hashlib.sha256(data.encode("utf-8")).hexdigest()
                 written.append({
