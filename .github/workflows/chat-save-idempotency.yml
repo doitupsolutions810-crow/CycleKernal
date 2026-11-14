@@ -1,0 +1,43 @@
+name: Chat save idempotency contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/chat_save_idempotency.js"
+      - "backend/test_chat_save_idempotency.js"
+      - "backend/server.js"
+      - "backend/package.json"
+      - ".github/workflows/chat-save-idempotency.yml"
+  push:
+    branches: [main, "fix/chat-save-idempotency-20261027"]
+    paths:
+      - "backend/chat_save_idempotency.js"
+      - "backend/test_chat_save_idempotency.js"
+      - "backend/server.js"
+      - "backend/package.json"
+      - ".github/workflows/chat-save-idempotency.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-save-idempotency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Run isolated idempotency contract tests
+        working-directory: backend
+        run: node --test test_chat_save_idempotency.js
