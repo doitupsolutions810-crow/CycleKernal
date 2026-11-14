@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY --from=build /wheels /wheels
 COPY bridge/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
-COPY bridge/main.py bridge/traits.py ./
+COPY bridge/main.py bridge/traits.py bridge/ns_fusion.py ./
 COPY evolution /app/src/evolution
 RUN chmod -R a=rX /app/src/evolution
 USER app

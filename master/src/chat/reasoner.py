@@ -46,6 +46,19 @@ Rules:
 """
 
 
+def llm_completions_url() -> str:
+    """OpenAI-compatible completions endpoint, or "" when no LLM is configured."""
+    if not LLM_BASE_URL:
+        return ""
+    return f"{LLM_BASE_URL}/v1/chat/completions"
+
+
+async def call_llm(messages: List[Dict[str, str]], mood_override: str = "") -> str:
+    """Single-shot completion returning raw assistant text ("" on any failure or no config)."""
+    message = await call_llm_with_tools(messages, mood_override=mood_override, use_tools=False)
+    return (message or {}).get("content") or ""
+
+
 async def call_llm_with_tools(
     messages: List[Dict[str, Any]],
     mood_override: str = "",
@@ -73,12 +86,8 @@ async def call_llm_with_tools(
         payload["tool_choice"] = "auto"
 
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(
-                f"{LLM_BASE_URL}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(llm_completions_url(), json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
             return data["choices"][0]["message"]
@@ -241,6 +250,7 @@ async def reason(user_message: str, history: List[Dict] = None, mood: str = "") 
         mood_override=mood,
         use_tools=True,
     )
+    llm_url = llm_completions_url()
     if assistant_msg:
         calls = parse_tool_calls_from_message(assistant_msg)
         if calls:
@@ -250,13 +260,24 @@ async def reason(user_message: str, history: List[Dict] = None, mood: str = "") 
                 "args": c.arguments,
                 "reason": "llm_tool_call",
                 "source": "custom_llm",
+                "llm_url": llm_url,
                 "tool_calls": [c.to_openai() for c in calls],
             }
+        text = (assistant_msg.get("content") or "").strip()
+        # Models without native tool_calls may answer with a JSON decision in the text body.
+        if text.startswith("{") or text.startswith("```"):
+            parsed = parse_tool_response(text)
+            if isinstance(parsed, dict) and parsed.get("tool"):
+                parsed.setdefault("args", {})
+                parsed["source"] = "custom_llm"
+                parsed["llm_url"] = llm_url
+                return parsed
         return {
             "tool": None,
-            "answer": assistant_msg.get("content") or "",
+            "answer": text,
             "reason": "direct",
             "source": "custom_llm",
+            "llm_url": llm_url,
         }
 
     local = local_reason(user_message, history)
@@ -268,6 +289,7 @@ async def reason(user_message: str, history: List[Dict] = None, mood: str = "") 
             "args": c.arguments,
             "reason": "local_tool_call",
             "source": "local_reasoner",
+            "llm_url": llm_url,
             "tool_calls": [c.to_openai() for c in calls],
         }
     return {
@@ -275,4 +297,5 @@ async def reason(user_message: str, history: List[Dict] = None, mood: str = "") 
         "answer": local.get("content") or "",
         "reason": "direct",
         "source": "local_reasoner",
+        "llm_url": llm_url,
     }
