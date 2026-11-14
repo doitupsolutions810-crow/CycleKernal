@@ -59,7 +59,7 @@ jobs:
         run: python3 scripts/edge_test.py http://127.0.0.1:8080
       - name: Verify eight release image manifests (amd64 + arm64)
         env:
-          CYCLEKERNEL_IMAGE_TAG: 22b25ae654fac11be0b08e2d60bae0396293441e
+          CYCLEKERNEL_IMAGE_TAG: 621175fd960590937e40dbf381a1d9b036618e0e
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |

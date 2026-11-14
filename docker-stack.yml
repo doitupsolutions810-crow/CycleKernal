@@ -4,7 +4,7 @@ version: "3.9"
 # Release: set CYCLEKERNEL_IMAGE_TAG=<full commit sha> (a single variable pins every service).
 services:
   frontend:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-frontend:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-frontend:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     configs:
       - source: nginx-config
         target: /etc/nginx/conf.d/default.conf
@@ -20,14 +20,14 @@ services:
       update_config: {parallelism: 1, order: start-first}
 
   simulation:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-simulation:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-simulation:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     networks: [app]
     deploy:
       replicas: 1
       restart_policy: {condition: on-failure}
 
   monitoring:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-monitoring:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-monitoring:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -39,7 +39,7 @@ services:
       restart_policy: {condition: on-failure}
 
   cognitive-bridge:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-bridge:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-bridge:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       BRIDGE_USE_NS: "0"
     networks: [app]
@@ -48,7 +48,7 @@ services:
       restart_policy: {condition: on-failure}
 
   terminal-runtime:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-terminal:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-terminal:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       ARTIFACT_ROOT: /artifacts
     volumes:
@@ -61,7 +61,7 @@ services:
         constraints: [node.role == manager]
 
   orchestrator:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-orchestrator:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-orchestrator:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       BRIDGE_URL: http://cognitive-bridge:8090
       TERMINAL_URL: http://terminal-runtime:8200
@@ -76,7 +76,7 @@ services:
       restart_policy: {condition: on-failure}
 
   chat:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-chat:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-chat:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       BRIDGE_URL: http://cognitive-bridge:8090
       ORCH_URL: http://orchestrator:8100
@@ -91,7 +91,7 @@ services:
       restart_policy: {condition: on-failure}
 
   colony:
-    image: ghcr.io/doitupsolutions810-crow/cyclekernel-colony:${CYCLEKERNEL_IMAGE_TAG:-22b25ae654fac11be0b08e2d60bae0396293441e}
+    image: ghcr.io/doitupsolutions810-crow/cyclekernel-colony:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       BRIDGE_URL: http://cognitive-bridge:8090
       CHAT_URL: http://chat:8300
