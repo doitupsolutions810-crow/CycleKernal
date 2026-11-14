@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   edge-tests:
@@ -17,9 +18,9 @@ jobs:
       COMPOSE_PROJECT_NAME: cyclekernel-ci-${{ github.run_id }}
       MONGO_INITDB_ROOT_PASSWORD: ci-only-mongo-password-do-not-use-outside-ci
       GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-do-not-use-outside-ci
-      EDGE_SOAK_REQUESTS: "500"
-      EDGE_SOAK_WORKERS: "24"
-      EDGE_SOAK_SECONDS: "60"
+      EDGE_SOAK_REQUESTS: "1000"
+      EDGE_SOAK_WORKERS: "32"
+      EDGE_SOAK_SECONDS: "120"
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack
@@ -38,6 +39,23 @@ jobs:
           done
       - name: Run robust chat and agent edge suite
         run: python3 scripts/edge_test.py http://127.0.0.1:8080
+      - name: Verify eight release image manifests (amd64 + arm64)
+        env:
+          CYCLEKERNEL_IMAGE_TAG: 22b25ae654fac11be0b08e2d60bae0396293441e
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          ok=0
+          for service in frontend simulation monitoring bridge terminal orchestrator chat colony; do
+            ref="ghcr.io/$GITHUB_REPOSITORY_OWNER/cyclekernel-$service:$CYCLEKERNEL_IMAGE_TAG"
+            archs="$(docker buildx imagetools inspect --raw "$ref" | python3 -c 'import json,sys; x=json.load(sys.stdin); print(",".join(sorted({m.get("platform",{}).get("architecture") for m in x.get("manifests",[]) if m.get("platform",{}).get("os")=="linux" and m.get("platform",{}).get("architecture") not in (None,"unknown")})))')"
+            echo "$service: ${archs:-MISSING}"
+            [[ "$archs" == "amd64,arm64" ]]
+            ok=$((ok + 1))
+          done
+          echo "verified $ok/8"
       - name: Show service state on failure
         if: failure()
         run: docker compose ps && docker compose logs --tail=200

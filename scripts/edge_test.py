@@ -223,6 +223,34 @@ check("plan is not an array", status == 422, f"status={status}")
 status, _ = request(CHAT + "/v1/tools/execute_advanced", {"plan": [None]}, "POST")
 check("plan contains null", status == 422, f"status={status}")
 
+# Nested protocol shapes that previously escaped validation and raised 500.
+for label, malformed in (
+    ("false tool_calls", {"tool_calls": False}),
+    ("empty-string tool_calls", {"tool_calls": ""}),
+    ("null tool_calls", {"tool_calls": None}),
+    ("scalar function", {"tool_calls": [{"function": 7}]}),
+    ("list function", {"tool_calls": [{"function": []}]}),
+    ("numeric tool id", {"tool_calls": [{"id": 5, "function": {"name": "planning"}}]}),
+    ("numeric tool name", {"tool_calls": [{"function": {"name": 17}}]}),
+    ("list arguments", {"tool_calls": [{"function": {"name": "planning", "arguments": []}}]}),
+    ("unknown tool type", {"tool_calls": [{"type": "other", "function": {"name": "planning"}}]}),
+):
+    for endpoint in ("/v1/tools/execute", "/v1/tools/execute_advanced"):
+        status, _ = request(CHAT + endpoint, malformed, "POST")
+        check(label + " on " + endpoint, status == 422, f"status={status}")
+
+for label, invalid_plan in (
+    ("missing DAG id", [{"tool": "planning", "arguments": {"goal": "x"}}]),
+    ("missing DAG tool", [{"id": "a", "arguments": {"goal": "x"}}]),
+    ("numeric DAG id", [{"id": 5, "tool": "planning"}]),
+    ("list DAG arguments", [{"id": "a", "tool": "planning", "arguments": []}]),
+    ("scalar DAG dependencies", [{"id": "a", "tool": "planning", "depends_on": 8}]),
+    ("non-string DAG dependency", [{"id": "a", "tool": "planning", "depends_on": [1]}]),
+    ("duplicate DAG ids", [{"id": "a", "tool": "planning"}, {"id": "a", "tool": "planning"}]),
+):
+    status, _ = request(CHAT + "/v1/tools/execute_advanced", {"plan": invalid_plan}, "POST")
+    check(label + " rejected", status == 422, f"status={status}")
+
 # Batch limits and duplicate ids.
 def planning_call(i, call_id=None):
     return {"id": call_id or f"batch-{i}", "type": "function",

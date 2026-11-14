@@ -88,13 +88,23 @@ def _parse_tool_calls(payload: Any) -> List[ToolCall]:
     """Validate an OpenAI-style tool_calls array; raise 422 instead of 500 on bad shapes."""
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="body must be a JSON object")
-    raw_calls = payload.get("tool_calls") or []
+    raw_calls = payload.get("tool_calls", [])
     if not isinstance(raw_calls, list):
         raise HTTPException(status_code=422, detail="tool_calls must be an array")
     if len(raw_calls) > 100:
         raise HTTPException(status_code=422, detail="at most 100 tool_calls per request")
     if not all(isinstance(c, dict) for c in raw_calls):
         raise HTTPException(status_code=422, detail="each tool_call must be an object")
+    for call in raw_calls:
+        fn = call.get("function")
+        if not isinstance(fn, dict):
+            raise HTTPException(status_code=422, detail="tool_call.function must be an object")
+        if ("id" in call and not isinstance(call["id"], str)
+                or "type" in call and call["type"] != "function"
+                or "name" in fn and not isinstance(fn["name"], str)
+                or "name" in call and not isinstance(call["name"], str)
+                or "arguments" in fn and not isinstance(fn["arguments"], (str, dict))):
+            raise HTTPException(status_code=422, detail="invalid tool_call fields")
     return [ToolCall.from_openai(c) for c in raw_calls]
 
 
@@ -296,6 +306,19 @@ async def execute_advanced(payload: Dict[str, Any]):
     ):
         raise HTTPException(status_code=422, detail="plan must be an array of at most 100 objects")
     if plan:
+        seen_ids = set()
+        for step in plan:
+            step_id, tool_name = step.get("id"), step.get("tool")
+            args = step.get("arguments", {})
+            deps = step.get("depends_on") or []
+            if (not isinstance(step_id, str) or not step_id.strip()
+                    or not isinstance(tool_name, str) or not tool_name.strip()
+                    or not isinstance(args, dict)
+                    or not isinstance(deps, list)
+                    or not all(isinstance(dep, str) for dep in deps)
+                    or step_id in seen_ids):
+                raise HTTPException(status_code=422, detail="invalid or duplicate DAG plan fields")
+            seen_ids.add(step_id)
         results = await ADVANCED.execute_dag(plan)
     else:
         calls = _parse_tool_calls(payload)
