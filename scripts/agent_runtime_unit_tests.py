@@ -51,6 +51,23 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["available"], capacity, state)
         self.assertEqual(state["metrics"]["accepted"], state["metrics"]["completed"], state)
 
+    async def test_unknown_tools_do_not_allocate_global_capacity_state(self):
+        name = "unit_known"
+        rt = make_runtime(name)
+        for i in range(600):
+            result = await rt.execute_one(
+                ToolCall(f"id-{i}", f"unknown_{i}", {"value": "x"}),
+                ToolTrace("unknown-names"),
+            )
+            self.assertFalse(result.success)
+            self.assertIn("unknown tool", result.error)
+        self.assertEqual(rt.bulkheads._bulkheads, {})
+        self.assertEqual(dict(rt.rates.hits), {})
+        self.assertEqual(rt._semaphores, {})
+        result = await rt.execute_one(call(name, "normal"), ToolTrace("recovery"))
+        self.assertTrue(result.success)
+        self.assert_pool_clean(rt, name)
+
     async def test_schema_rejections_release_capacity(self):
         name = "unit_schema"
         rt = make_runtime(name)

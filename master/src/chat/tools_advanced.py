@@ -329,8 +329,19 @@ class AdvancedToolRuntime:
         return self._semaphores[name]
 
     async def execute_one(self, call: ToolCall, trace: ToolTrace) -> ToolResult:
+        trace.event("tool_start", tool=call.name, call_id=call.id)
+        # Unknown names must be rejected before creating per-name circuit,
+        # bulkhead, semaphore or rate-limit state.
+        spec = self.registry._tools.get(call.name)
+        if not spec:
+            return ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content={},
+                success=False,
+                error=f"unknown tool: {call.name}",
+            )
         policy = self.policy_for(call.name)
-        trace.event("tool_start", tool=call.name, call_id=call.id, args=call.arguments)
 
         # Circuit
         if not await self.circuits.allow(call.name):
@@ -368,15 +379,6 @@ class AdvancedToolRuntime:
                 )
 
             # Schema validation
-            spec = self.registry._tools.get(call.name)
-            if not spec:
-                return ToolResult(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    content={},
-                    success=False,
-                    error=f"unknown tool: {call.name}",
-                )
             verr = validate_args(spec.parameters or {}, call.arguments)
             if verr:
                 return ToolResult(
