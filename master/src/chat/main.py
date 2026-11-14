@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Literal
 import httpx
 import logging
 import os
+import time
 from collections import OrderedDict
 from datetime import datetime
 
@@ -21,7 +22,7 @@ from circuit_breaker import BREAKERS, CircuitState
 from bulkhead import BULKHEADS
 from tools_advanced import (
     ADVANCED, ToolChoice, ToolChoiceMode, run_advanced_tool_loop,
-    PENDING_APPROVALS, AUTO_APPROVE,
+    PENDING_APPROVALS, AUTO_APPROVE, APPROVAL_TTL_SECONDS,
 )
 from scraper import scrape_and_analyze
 
@@ -318,19 +319,32 @@ async def execute_tools_endpoint(payload: Dict[str, Any], authorization: Optiona
 
 
 def _require_execution_token(authorization: Optional[str]) -> None:
-    """Separate trusted operator tool execution from public chat and approvals."""
-    if not os.getenv("CK_TOOL_EXECUTION_TOKEN", ""):
-        raise HTTPException(status_code=503, detail="privileged tool execution is not configured")
+    """Require independently configured operator and human approval secrets."""
+    secret = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
+    if not secret or secret in (
+        os.getenv("CK_TOOL_APPROVAL_TOKEN", ""), os.getenv("CK_TERMINAL_SERVICE_TOKEN", ""),
+    ):
+        raise HTTPException(status_code=503, detail="distinct tool execution credentials required")
     if not _is_execution_authorized(authorization):
         raise HTTPException(status_code=403, detail="tool execution authorization required")
 
 
 def _require_approval_token(authorization: Optional[str]) -> None:
     secret = os.getenv("CK_TOOL_APPROVAL_TOKEN", "")
-    if not secret:
-        raise HTTPException(status_code=503, detail="tool approvals are not configured")
+    if not secret or secret in (
+        os.getenv("CK_TOOL_EXECUTION_TOKEN", ""), os.getenv("CK_TERMINAL_SERVICE_TOKEN", ""),
+    ):
+        raise HTTPException(status_code=503, detail="distinct approval credentials required")
     if not authorization or not hmac.compare_digest(authorization, "Bearer " + secret):
         raise HTTPException(status_code=403, detail="tool approval authorization required")
+
+
+def _prune_expired_approvals() -> None:
+    """Prevent stale approvals from being approved or disclosed after expiry."""
+    now = time.time()
+    for identifier, entry in list(PENDING_APPROVALS.items()):
+        if now - entry.get("created_at", 0) > APPROVAL_TTL_SECONDS:
+            PENDING_APPROVALS.pop(identifier, None)
 
 
 @app.post("/v1/tools/approve")
@@ -342,8 +356,12 @@ async def approve_tool(payload: Dict[str, Any], authorization: Optional[str] = H
         raise HTTPException(status_code=422, detail="call_id must be nonempty string")
     if not isinstance(approve, bool):
         raise HTTPException(status_code=422, detail="approve must be boolean")
+    had_pending = call_id in PENDING_APPROVALS
+    _prune_expired_approvals()
     entry = PENDING_APPROVALS.get(call_id)
     if not entry:
+        if had_pending:
+            raise HTTPException(status_code=410, detail="approval expired")
         return {"error": "unknown call_id", "call_id": call_id}
     if entry.get("status") != "pending":
         raise HTTPException(status_code=409, detail="approval already decided")
@@ -355,6 +373,7 @@ async def approve_tool(payload: Dict[str, Any], authorization: Optional[str] = H
 @app.get("/v1/tools/pending")
 async def list_pending(authorization: Optional[str] = Header(default=None)):
     _require_approval_token(authorization)
+    _prune_expired_approvals()
     return {"pending": PENDING_APPROVALS}
 
 @app.post("/v1/tools/execute_advanced")

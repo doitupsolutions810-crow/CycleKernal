@@ -115,6 +115,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.terminal_count, 0)
         self.assertTrue(client.feedback[-1]["success"])
 
+    async def test_duplicate_service_and_execution_tokens_fail_closed(self):
+        with patch.dict(os.environ, {
+            "CK_TOOL_EXECUTION_TOKEN": "duplicate-value",
+            "CK_TERMINAL_SERVICE_TOKEN": "duplicate-value",
+        }):
+            with self.assertRaises(orch.HTTPException) as ctx:
+                await orch.run_pipeline(
+                    orch.GoalRequest(goal="must not execute"),
+                    authorization="Bearer duplicate-value",
+                )
+        self.assertEqual(ctx.exception.status_code, 503)
+
     async def test_missing_execution_token_fails_before_agents_run(self):
         with patch.dict(os.environ, {"CK_TOOL_EXECUTION_TOKEN": ""}):
             with self.assertRaises(orch.HTTPException) as ctx:

@@ -79,8 +79,8 @@ async def proxy_mood():
 @app.post("/v1/run", response_model=PipelineResult)
 async def run_pipeline(req: GoalRequest, authorization: Optional[str] = Header(default=None)):
     execution_token = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
-    if not execution_token:
-        raise HTTPException(status_code=503, detail="orchestrator execution is not configured")
+    if not execution_token or execution_token == os.getenv("CK_TERMINAL_SERVICE_TOKEN", ""):
+        raise HTTPException(status_code=503, detail="distinct orchestrator execution credentials required")
     if not authorization or not hmac.compare_digest(authorization, "Bearer " + execution_token):
         raise HTTPException(status_code=403, detail="orchestrator execution authorization required")
     """

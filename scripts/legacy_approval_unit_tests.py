@@ -2,6 +2,7 @@
 """Legacy/v2 policy parity, approval replay and downstream outcome tests."""
 import asyncio
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -81,6 +82,69 @@ class LegacyPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual((await reg.execute(c)).error, "pending_approval")
         self.assertEqual(len(calls), 1)
+
+    async def test_concurrent_retries_execute_at_most_once(self):
+        reg, calls = register()
+        tool = ToolCall("single-flight", "terminal_execute", {"content": "safe"})
+        self.assertEqual((await reg.execute(tool)).error, "pending_approval")
+        PENDING_APPROVALS[tool.id]["status"] = "approved"
+        results = await asyncio.gather(*[reg.execute(tool) for _ in range(40)])
+        self.assertEqual(sum(result.success for result in results), 1)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(all(result.success or result.error == "pending_approval"
+                            for result in results))
+
+    async def test_simultaneous_legacy_and_advanced_retries_share_single_approval(self):
+        reg, calls = register()
+        call = ToolCall("interleaved-approval", "terminal_execute", {"content": "safe"})
+        self.assertEqual((await reg.execute(call)).error, "pending_approval")
+        PENDING_APPROVALS[call.id]["status"] = "approved"
+        advanced = AdvancedToolRuntime(registry=reg)
+        results = await asyncio.gather(
+            reg.execute(call),
+            advanced.execute_one(call, ToolTrace("dual-protocol")),
+        )
+        self.assertEqual(sum(result.success for result in results), 1)
+        self.assertEqual(len(calls), 1)
+
+    async def test_expired_admin_approval_is_rejected_with_410(self):
+        import main as chat
+        call = ToolCall("expired-admin", "terminal_execute", {"content": "safe"})
+        reg, _ = register()
+        self.assertEqual((await reg.execute(call)).error, "pending_approval")
+        PENDING_APPROVALS[call.id]["created_at"] -= 10000
+        with self.assertRaises(chat.HTTPException) as exception:
+            await chat.approve_tool(
+                {"call_id": call.id, "approve": True},
+                authorization="Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"],
+            )
+        self.assertEqual(exception.exception.status_code, 410)
+        self.assertNotIn(call.id, PENDING_APPROVALS)
+
+    async def test_admin_listing_prunes_expired_and_retains_current(self):
+        import main as chat
+        reg, _ = register()
+        for cid in ("stale-item", "current-item"):
+            call = ToolCall(cid, "terminal_execute", {"content": cid})
+            self.assertEqual((await reg.execute(call)).error, "pending_approval")
+        PENDING_APPROVALS["stale-item"]["created_at"] -= 10000
+        result = await chat.list_pending(
+            authorization="Bearer " + os.environ["CK_TOOL_APPROVAL_TOKEN"]
+        )
+        self.assertNotIn("stale-item", result["pending"])
+        self.assertIn("current-item", result["pending"])
+
+    async def test_misconfigured_equal_role_tokens_fail_closed(self):
+        import main as chat
+        with patch.dict(os.environ, {
+            "CK_TOOL_EXECUTION_TOKEN": "same-token",
+            "CK_TOOL_APPROVAL_TOKEN": "same-token",
+            "CK_TERMINAL_SERVICE_TOKEN": "distinct-service",
+        }):
+            for guard in (chat._require_execution_token, chat._require_approval_token):
+                with self.assertRaises(chat.HTTPException) as exception:
+                    guard("Bearer same-token")
+                self.assertEqual(exception.exception.status_code, 503)
 
     async def test_missing_required_arguments_do_not_request_approval(self):
         reg, calls = register()
