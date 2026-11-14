@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ENV_FILE=${1:-"$ROOT/.env"}
@@ -16,7 +16,7 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
         continue
     key, value = line.split('=', 1)
     values[key] = value
-required = ('MONGO_INITDB_ROOT_PASSWORD', 'GRAFANA_ADMIN_PASSWORD')
+required = ('MONGO_INITDB_ROOT_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'CK_TOOL_APPROVAL_TOKEN')
 missing = [key for key in required if not values.get(key)]
 if missing:
     raise SystemExit('Missing required secret keys: ' + ', '.join(missing))
@@ -32,6 +32,7 @@ secret = {
         'LLM_BASE_URL': base64.b64encode(values.get('LLM_BASE_URL', '').encode()).decode(),
         'LLM_API_KEY': base64.b64encode(values.get('LLM_API_KEY', '').encode()).decode(),
         'LLM_MODEL': base64.b64encode(values.get('LLM_MODEL', 'gpt-4o-mini').encode()).decode(),
+        'CK_TOOL_APPROVAL_TOKEN': base64.b64encode(values['CK_TOOL_APPROVAL_TOKEN'].encode()).decode(),
     },
 }
 print(json.dumps(secret))

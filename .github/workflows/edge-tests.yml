@@ -38,6 +38,19 @@ jobs:
               sleep 2
             done
           done
+      - name: Verify runner-network isolation and authorized service reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T frontend sh -c 'if wget -T 3 -qO- http://terminal-runtime:8200/health; then echo "runner exposed to frontend"; exit 1; else echo "runner isolated from frontend"; fi'
+          docker compose exec -T chat python -c 'import urllib.request; assert b"terminal-online" in urllib.request.urlopen("http://terminal-runtime:8200/health", timeout=5).read(); print("authorized chat-to-terminal path healthy")'
+      - name: Verify Kubernetes approval-token secret wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/secret-values.template.yaml
+          grep -q "secretRef: {name: cyclekernel-secrets}" k8s/cyclekernel.yaml
       - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
         run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
       - name: Run terminal process-tree and bounded-output tests
