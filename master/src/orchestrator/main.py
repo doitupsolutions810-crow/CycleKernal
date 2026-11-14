@@ -121,6 +121,7 @@ async def run_pipeline(req: GoalRequest, authorization: Optional[str] = Header(d
 
     final_artifact = code_res.output if code_res.success else None
     execution = None
+    execution_succeeded = False
 
     # --- Terminal execution ---
     if req.auto_execute and final_artifact:
@@ -134,9 +135,15 @@ async def run_pipeline(req: GoalRequest, authorization: Optional[str] = Header(d
                 r = await c.post(f"{TERMINAL_URL}/v1/execute", json=exec_payload,
                                  headers={"Authorization": "Bearer " + os.getenv("CK_TERMINAL_SERVICE_TOKEN", "")})
                 execution = r.json()
-                stages.append({"stage": "execution", "success": r.status_code == 200, "output": execution})
+                execution_succeeded = (
+                    r.status_code == 200
+                    and isinstance(execution, dict)
+                    and execution.get("exit_code") == 0
+                )
+                stages.append({"stage": "execution", "success": execution_succeeded, "output": execution})
         except Exception as e:
             execution = {"error": str(e)}
+            execution_succeeded = False
             stages.append({"stage": "execution", "success": False, "output": execution})
 
     # --- Closed-loop feedback ---
@@ -144,14 +151,14 @@ async def run_pipeline(req: GoalRequest, authorization: Optional[str] = Header(d
         async with httpx.AsyncClient(timeout=3.0) as c:
             await c.post(f"{BRIDGE_URL}/v1/feedback", json={
                 "goal": req.goal,
-                "success": all(s.get("success", False) for s in stages if s["stage"] != "execution") or (execution and not execution.get("error")),
+                "success": all(s.get("success", False) for s in stages),
                 "stages": [s["stage"] for s in stages],
                 "mood_at_start": started_mood.get("mood"),
             })
     except Exception as e:
         logger.warning(f"Feedback failed: {e}")
 
-    success = code_res.success and (execution is None or not execution.get("error"))
+    success = bool(code_res.success and (not req.auto_execute or execution_succeeded))
     return PipelineResult(
         goal=req.goal,
         mood_at_start=started_mood.get("mood", "unknown"),
