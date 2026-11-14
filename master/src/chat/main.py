@@ -244,7 +244,17 @@ async def chat(req: ChatRequest, authorization: Optional[str] = Header(default=N
 
     hist.append({"role": "assistant", "content": reply})
     if trusted_session:
-        _save_session(req.session_id, hist)
+        if req.history:
+            # Explicit caller-provided transcript is an intentional replacement.
+            _save_session(req.session_id, hist)
+        else:
+            # Reload at commit time: concurrent calls with the same session id
+            # must append their turns rather than overwrite a stale snapshot.
+            latest = _load_session(req.session_id)
+            _save_session(req.session_id, latest + [
+                {"role": "user", "content": req.message},
+                {"role": "assistant", "content": reply},
+            ])
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:

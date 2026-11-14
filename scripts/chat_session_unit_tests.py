@@ -98,6 +98,25 @@ class SessionAccessTests(IsolatedAsyncioTestCase):
         self.assertNotIn("private-marker", str(chat.reason.call_args.kwargs.get("history", [])))
         self.assertEqual(chat._load_session("shared-id")[0]["content"], "private-marker")
 
+    async def test_concurrent_authorized_turns_are_not_lost(self):
+        async def delayed_reason(message, **_kwargs):
+            await asyncio.sleep(0.03)
+            return {"tool": None, "answer": "reply:" + message}
+
+        chat.reason.side_effect = delayed_reason
+        with patch.dict(os.environ, {"CK_TOOL_EXECUTION_TOKEN": "unit-execution-secret"}):
+            await asyncio.gather(*[
+                chat.chat(chat.ChatRequest(
+                    message=f"turn-{i}", session_id="parallel",
+                    auto_spawn=False, use_tool_protocol=False,
+                ), authorization="Bearer unit-execution-secret")
+                for i in range(12)
+            ])
+        history = chat._load_session("parallel")
+        self.assertEqual(len(history), 24)
+        actual = {x["content"] for x in history if x["role"] == "user"}
+        self.assertEqual(actual, {f"turn-{i}" for i in range(12)})
+
     async def test_authorized_session_persists_bounded_history(self):
         with patch.dict(os.environ, {"CK_TOOL_EXECUTION_TOKEN": "unit-execution-secret"}):
             req = chat.ChatRequest(message="authorized", session_id="trusted",
