@@ -150,6 +150,19 @@ status, result = tool("terminal_execute", {
 entry = result.get("results", [{}])[0] if isinstance(result, dict) else {}
 check("terminal timeout bounded", status == 200 and entry.get("success") is True and entry.get("content", {}).get("exit_code") == 124, entry)
 
+# Default terminal path must handle whitespace safely; source uploads are capped.
+status, result = tool("terminal_execute", {
+    "filename": "path with spaces.py", "content": "print('spaced-ok')\n", "timeout_sec": 5,
+}, timeout=15)
+check("terminal default handles spaced filename", status == 200
+      and content(result).get("exit_code") == 0
+      and "spaced-ok" in content(result).get("stdout", ""), content(result))
+status, result = tool("terminal_execute", {
+    "filename": "source-oversize.py", "content": "x" * 2_000_001, "timeout_sec": 5,
+}, timeout=20)
+check("terminal 2MB source cap", status == 200 and content(result).get("status_code") == 413,
+      content(result))
+
 # Bulkhead bounds and API input validation.
 status, result = request(CHAT + "/v1/bulkheads/edge-test/configure", {
     "max_concurrent": -1, "max_queue": -1, "acquire_timeout_sec": 0,
