@@ -51,6 +51,7 @@ services:
     image: ghcr.io/doitupsolutions810-crow/cyclekernel-terminal:${CYCLEKERNEL_IMAGE_TAG:-621175fd960590937e40dbf381a1d9b036618e0e}
     environment:
       ARTIFACT_ROOT: /artifacts
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
     volumes:
       - artifacts:/artifacts
     networks: [runner]
@@ -65,6 +66,7 @@ services:
     environment:
       BRIDGE_URL: http://cognitive-bridge:8090
       TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
       CHAT_URL: http://chat:8300
       ARTIFACT_ROOT: /artifacts
       PYTHONPATH: /app
@@ -81,6 +83,7 @@ services:
       BRIDGE_URL: http://cognitive-bridge:8090
       ORCH_URL: http://orchestrator:8100
       TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:?Set CK_TERMINAL_SERVICE_TOKEN}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}

@@ -4,7 +4,8 @@ Accepts artifacts from the orchestrator, writes them to the shared volume,
 and executes them inside a controlled subprocess (sandbox).
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
+import hmac
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
@@ -132,12 +133,20 @@ class ExecuteResponse(BaseModel):
     timestamp: str
 
 
+def require_terminal_service_token(authorization: Optional[str] = Header(default=None)) -> None:
+    token = os.getenv("CK_TERMINAL_SERVICE_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="terminal service authorization not configured")
+    if not authorization or not hmac.compare_digest(authorization, "Bearer " + token):
+        raise HTTPException(status_code=403, detail="terminal service authorization required")
+
+
 @app.get("/health")
 async def health():
     return {"status": "terminal-online", "artifact_root": str(ARTIFACT_ROOT)}
 
 
-@app.post("/v1/execute", response_model=ExecuteResponse)
+@app.post("/v1/execute", response_model=ExecuteResponse, dependencies=[Depends(require_terminal_service_token)])
 async def execute(req: ExecuteRequest):
     """
     Write the artifact and run it under a timeout.
@@ -166,6 +175,12 @@ async def execute(req: ExecuteRequest):
             "stderr": asyncio.subprocess.PIPE,
             "cwd": str(root),
             "start_new_session": True,
+            # Do not pass service/operator credentials into executed child code.
+            # This is defense-in-depth, NOT isolation from same-UID /proc access.
+            "env": {
+                key: value for key, value in os.environ.items()
+                if key in ("PATH", "HOME", "LANG", "LC_ALL", "PYTHONPATH", "PYTHONUNBUFFERED")
+            },
         }
         # The default path never passes a filename through a shell.
         # Explicit shell commands remain privileged and need upstream controls.
@@ -198,7 +213,7 @@ async def execute(req: ExecuteRequest):
     )
 
 
-@app.get("/v1/artifacts")
+@app.get("/v1/artifacts", dependencies=[Depends(require_terminal_service_token)])
 async def list_artifacts():
     files = []
     for p in ARTIFACT_ROOT.iterdir():

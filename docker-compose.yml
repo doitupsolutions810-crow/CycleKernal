@@ -71,6 +71,7 @@ services:
       dockerfile: Dockerfile
     environment:
       ARTIFACT_ROOT: /artifacts
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:-}
     expose: ["8200"]
     volumes:
       - ck-artifacts:/artifacts
@@ -91,6 +92,7 @@ services:
     environment:
       BRIDGE_URL: http://cognitive-bridge:8090
       TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:-}
       CHAT_URL: http://chat:8300
       ARTIFACT_ROOT: /artifacts
       PYTHONPATH: /app
@@ -120,6 +122,7 @@ services:
       BRIDGE_URL: http://cognitive-bridge:8090
       ORCH_URL: http://orchestrator:8100
       TERMINAL_URL: http://terminal-runtime:8200
+      CK_TERMINAL_SERVICE_TOKEN: ${CK_TERMINAL_SERVICE_TOKEN:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}

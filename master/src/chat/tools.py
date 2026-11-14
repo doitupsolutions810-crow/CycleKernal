@@ -214,7 +214,8 @@ async def _tool_terminal_execute(args: Dict[str, Any]) -> Dict[str, Any]:
         "timeout_sec": int(args.get("timeout_sec") or 15),
     }
     async with httpx.AsyncClient(timeout=30.0) as c:
-        r = await c.post(f"{terminal}/v1/execute", json=payload)
+        r = await c.post(f"{terminal}/v1/execute", json=payload,
+                         headers={"Authorization": "Bearer " + os.getenv("CK_TERMINAL_SERVICE_TOKEN", "")})
         if r.status_code == 200:
             return r.json()
         return {"error": r.text, "status_code": r.status_code}

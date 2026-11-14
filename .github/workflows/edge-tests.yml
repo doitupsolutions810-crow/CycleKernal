@@ -23,6 +23,7 @@ jobs:
       EDGE_SOAK_SECONDS: "300"
       CK_TOOL_APPROVAL_TOKEN: ci-only-tool-approval-token-do-not-use-in-production
       CK_TOOL_EXECUTION_TOKEN: ci-only-distinct-execution-token-not-for-production
+      CK_TERMINAL_SERVICE_TOKEN: ci-only-third-terminal-service-secret
     steps:
       - uses: actions/checkout@v4
       - name: Start the Compose test stack
@@ -53,7 +54,12 @@ jobs:
           grep -q "CK_TOOL_APPROVAL_TOKEN" k8s/secret-values.template.yaml
           grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/apply-secrets.sh
           grep -q "CK_TOOL_EXECUTION_TOKEN" k8s/secret-values.template.yaml
+          grep -q "CK_TERMINAL_SERVICE_TOKEN" k8s/apply-secrets.sh
+          grep -q "CK_TERMINAL_SERVICE_TOKEN" k8s/secret-values.template.yaml
+          grep -q "key: CK_TERMINAL_SERVICE_TOKEN" k8s/cyclekernel.yaml
           grep -q "secretRef: {name: cyclekernel-secrets}" k8s/cyclekernel.yaml
+      - name: Verify internal terminal service authorization
+        run: docker compose exec -T chat python - < scripts/terminal_service_auth_test.py
       - name: Run focused agent runtime unit tests (timeouts, cancellation, DAG)
         run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
       - name: Run terminal process-tree and bounded-output tests

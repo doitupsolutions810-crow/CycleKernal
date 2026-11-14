@@ -125,7 +125,8 @@ async def run_pipeline(req: GoalRequest):
                     "content": final_artifact["content"],
                     "command": final_artifact.get("run_command"),
                 }
-                r = await c.post(f"{TERMINAL_URL}/v1/execute", json=exec_payload)
+                r = await c.post(f"{TERMINAL_URL}/v1/execute", json=exec_payload,
+                                 headers={"Authorization": "Bearer " + os.getenv("CK_TERMINAL_SERVICE_TOKEN", "")})
                 execution = r.json()
                 stages.append({"stage": "execution", "success": r.status_code == 200, "output": execution})
         except Exception as e:
