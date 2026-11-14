@@ -102,13 +102,18 @@ class Bulkhead:
         # Fast path: free slot
         if self._sem._value > 0:  # noqa: SLF001
             await self._sem.acquire()
-            async with self._lock:
-                self.metrics.in_use += 1
-                self.metrics.peak_in_use = max(
-                    self.metrics.peak_in_use, self.metrics.in_use
-                )
-                self.metrics.accepted += 1
-                self.metrics.total_wait_ms += (time.time() - start) * 1000.0
+            try:
+                async with self._lock:
+                    self.metrics.in_use += 1
+                    self.metrics.peak_in_use = max(
+                        self.metrics.peak_in_use, self.metrics.in_use
+                    )
+                    self.metrics.accepted += 1
+                    self.metrics.total_wait_ms += (time.time() - start) * 1000.0
+            except BaseException:
+                # Slot acquired but accounting cancelled while waiting on lock.
+                self._sem.release()
+                raise
             return True
 
         # No free slot — fail-fast if no queue
@@ -251,6 +256,11 @@ class BulkheadRegistry:
             max_queue=max_queue,
             acquire_timeout_sec=acquire_timeout_sec,
         )
+        current = self._bulkheads.get(name)
+        if current is not None and (
+            current.metrics.in_use > 0 or current.snapshot()["waiters"] > 0
+        ):
+            raise ValueError("cannot reconfigure an active bulkhead")
         self._configs[name] = cfg
         self._bulkheads[name] = Bulkhead(name, cfg)
 

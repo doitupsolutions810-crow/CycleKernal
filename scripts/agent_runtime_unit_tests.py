@@ -121,6 +121,40 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pool.snapshot()["available"], 1)
         self.assertEqual(pool.snapshot()["metrics"]["in_use"], 0)
 
+    async def test_fast_path_cancellation_returns_acquired_slot(self):
+        pool = Bulkhead("fast_cancel", BulkheadConfig(
+            max_concurrent=1, max_queue=0,
+        ))
+        await pool._lock.acquire()
+        task = asyncio.create_task(pool.acquire())
+        try:
+            for _ in range(40):
+                if pool.snapshot()["available"] == 0:
+                    break
+                await asyncio.sleep(0.005)
+            self.assertEqual(pool.snapshot()["available"], 0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=2)
+        finally:
+            pool._lock.release()
+        self.assertEqual(pool.snapshot()["available"], 1)
+        self.assertEqual(pool.snapshot()["metrics"]["in_use"], 0)
+
+    async def test_live_reconfiguration_does_not_replace_active_slot(self):
+        name = "unit_reconfigure"
+        registry = BulkheadRegistry({
+            name: BulkheadConfig(max_concurrent=1, max_queue=1),
+        })
+        pool = registry.get(name)
+        self.assertTrue(await pool.acquire())
+        with self.assertRaises(ValueError):
+            registry.configure(name, max_concurrent=9)
+        self.assertIs(registry.get(name), pool)
+        await pool.release()
+        registry.configure(name, max_concurrent=2)
+        self.assertEqual(registry.get(name).snapshot()["available"], 2)
+
     async def test_unknown_tools_do_not_allocate_global_capacity_state(self):
         name = "unit_known"
         rt = make_runtime(name)
