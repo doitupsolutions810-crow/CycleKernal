@@ -60,6 +60,27 @@ jobs:
         run: docker compose exec -T terminal-runtime python - < scripts/terminal_runtime_unit_tests.py
       - name: Run robust chat and agent edge suite
         run: python3 scripts/edge_test.py http://127.0.0.1:8080
+      - name: Inject dependency outages and verify recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker compose start cognitive-bridge terminal-runtime >/dev/null || true; }
+          trap cleanup EXIT
+          docker compose stop cognitive-bridge
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 bridge-down
+          docker compose start cognitive-bridge
+          docker compose stop terminal-runtime
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 terminal-down
+          docker compose start terminal-runtime
+          for service in cognitive-bridge terminal-runtime; do
+            for attempt in {1..60}; do
+              health="$(docker compose ps --format json "$service" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Health", ""))')"
+              [[ "$health" == healthy ]] && break
+              [[ "$attempt" -lt 60 ]] || { docker compose logs "$service"; exit 1; }
+              sleep 2
+            done
+          done
+          python3 scripts/dependency_outage_test.py http://127.0.0.1:8080 recovered
       - name: Verify eight release image manifests (amd64 + arm64)
         env:
           CYCLEKERNEL_IMAGE_TAG: 621175fd960590937e40dbf381a1d9b036618e0e
