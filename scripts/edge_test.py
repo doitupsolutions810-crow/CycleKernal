@@ -160,8 +160,9 @@ check("terminal default handles spaced filename", status == 200
 status, result = tool("terminal_execute", {
     "filename": "source-oversize.py", "content": "x" * 2_000_001, "timeout_sec": 5,
 }, timeout=20)
-check("terminal 2MB source cap", status == 200 and content(result).get("status_code") == 413,
-      content(result))
+check("oversized terminal request rejected by ingress or runtime",
+      status == 413 or (status == 200 and content(result).get("status_code") == 413),
+      f"status={status} result={str(result)[:140]}")
 
 # Bulkhead bounds and API input validation.
 status, result = request(CHAT + "/v1/bulkheads/edge-test/configure", {
