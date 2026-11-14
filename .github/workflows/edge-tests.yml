@@ -58,6 +58,8 @@ jobs:
         run: docker compose exec -T chat python - < scripts/agent_runtime_unit_tests.py
       - name: Run terminal process-tree and bounded-output tests
         run: docker compose exec -T terminal-runtime python - < scripts/terminal_runtime_unit_tests.py
+      - name: Run chat session privacy and bounded-memory unit tests
+        run: docker compose exec -T chat python - < scripts/chat_session_unit_tests.py
       - name: Run robust chat and agent edge suite
         run: python3 scripts/edge_test.py http://127.0.0.1:8080
       - name: Inject dependency outages and verify recovery

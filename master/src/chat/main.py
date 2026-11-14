@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import logging
 import os
+from collections import OrderedDict
 from datetime import datetime
 
 from reasoner import reason, run_tool_loop
@@ -43,7 +44,41 @@ AGENT_SRC = str(Path(__file__).resolve().parents[1])
 if AGENT_SRC not in sys.path:
     sys.path.insert(0, AGENT_SRC)
 
-SESSIONS: Dict[str, List[Dict]] = {}
+MAX_SESSIONS = 256
+MAX_SESSION_MESSAGES = 30
+MAX_STORED_CONTENT_CHARS = 4096
+SESSIONS: OrderedDict[str, List[Dict[str, str]]] = OrderedDict()
+
+
+def _load_session(session_id: str) -> List[Dict[str, str]]:
+    """Return a defensive copy so concurrent requests cannot mutate cached lists."""
+    cached = SESSIONS.get(session_id)
+    if cached is None:
+        return []
+    SESSIONS.move_to_end(session_id)
+    return [dict(message) for message in cached]
+
+
+def _save_session(session_id: str, messages: List[Dict[str, Any]]) -> None:
+    """Bound the number, per-session depth, and retained content length."""
+    sanitized = []
+    for message in messages[-MAX_SESSION_MESSAGES:]:
+        role = str(message.get("role", "user"))[:32]
+        content = message.get("content") or ""
+        if not isinstance(content, str):
+            content = str(content)
+        sanitized.append({"role": role, "content": content[-MAX_STORED_CONTENT_CHARS:]})
+    SESSIONS[session_id] = sanitized
+    SESSIONS.move_to_end(session_id)
+    while len(SESSIONS) > MAX_SESSIONS:
+        SESSIONS.popitem(last=False)
+
+
+def _is_execution_authorized(authorization: Optional[str]) -> bool:
+    secret = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
+    return bool(secret) and bool(authorization) and hmac.compare_digest(
+        authorization, "Bearer " + secret
+    )
 
 
 class ChatMessage(BaseModel):
@@ -56,8 +91,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "default"
-    history: List[ChatMessage] = Field(default_factory=list)
+    session_id: str = Field(default="default", min_length=1, max_length=128)
+    history: List[ChatMessage] = Field(default_factory=list, max_length=64)
     auto_spawn: bool = False  # Public chat is read-only unless explicitly authorized.
     use_tool_protocol: bool = True
     max_rounds: int = 5
@@ -141,7 +176,10 @@ async def chat(req: ChatRequest, authorization: Optional[str] = Header(default=N
     mood_data = await get_mood()
     mood = mood_data.get("mood", "neutral")
 
-    hist = SESSIONS.get(req.session_id, [])
+    # Unauthenticated callers cannot read/write a shared session history by
+    # guessing its id; they may supply their own explicit history in the body.
+    trusted_session = _is_execution_authorized(authorization)
+    hist = _load_session(req.session_id) if trusted_session else []
     if req.history:
         hist = [h.model_dump(exclude_none=True) for h in req.history]
     hist.append({"role": "user", "content": req.message})
@@ -205,7 +243,8 @@ async def chat(req: ChatRequest, authorization: Optional[str] = Header(default=N
         reply += f"\n\n— cognitive bias active: {mood} —"
 
     hist.append({"role": "assistant", "content": reply})
-    SESSIONS[req.session_id] = hist[-30:]
+    if trusted_session:
+        _save_session(req.session_id, hist)
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
@@ -269,10 +308,9 @@ async def execute_tools_endpoint(payload: Dict[str, Any], authorization: Optiona
 
 def _require_execution_token(authorization: Optional[str]) -> None:
     """Separate trusted operator tool execution from public chat and approvals."""
-    secret = os.getenv("CK_TOOL_EXECUTION_TOKEN", "")
-    if not secret:
+    if not os.getenv("CK_TOOL_EXECUTION_TOKEN", ""):
         raise HTTPException(status_code=503, detail="privileged tool execution is not configured")
-    if not authorization or not hmac.compare_digest(authorization, "Bearer " + secret):
+    if not _is_execution_authorized(authorization):
         raise HTTPException(status_code=403, detail="tool execution authorization required")
 
 
