@@ -240,6 +240,68 @@ async def test_concurrent_posts_across_paths_and_sources(bridge_env):
     assert health.json()["boot"] == main.BOOT_ID
 
 
+def test_two_processes_share_one_store(tmp_path, monkeypatch):
+    store = tmp_path / "events.json"
+    bridge = Path(__file__).resolve().parents[1] / "src" / "bridge"
+    script = """
+import os, sys
+os.environ["CK_EVENTS_PATH"] = sys.argv[1]
+os.environ["CK_SYNTHETIC"] = "0"
+os.environ["WS_RELAY_URL"] = "ws://127.0.0.1:1/ws/out"
+import main
+source, eid = sys.argv[2], sys.argv[3]
+kind = "evidence" if source == "greatscale" else "finding"
+event, err = main.normalize_event({
+    "id": eid,
+    "source": source,
+    "kind": kind,
+    "run_id": "run-1",
+    "payload": {"text": eid},
+    "ts": 1,
+})
+if err:
+    raise SystemExit(err)
+print("DUP" if main._store_event(event) else "NEW")
+"""
+    specs = [("avrone", f"id-{i}") for i in range(8)]
+    specs += [("avrone", "shared") for _ in range(6)]
+    specs += [("greatscale", "shared") for _ in range(4)]
+    procs = []
+    for source, eid in specs:
+        procs.append(subprocess.Popen(
+            [sys.executable, "-c", script, str(store), source, eid],
+            cwd=bridge,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ))
+    deadline = time.monotonic() + 30
+    lines = []
+    for proc in procs:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            proc.kill()
+            _anomaly("multiprocess store deadline exceeded")
+            raise AssertionError("deadline")
+        try:
+            out, err = proc.communicate(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            _anomaly("store worker timed out", exc)
+            raise
+        if proc.returncode != 0:
+            _anomaly(err.decode(errors="replace"))
+        assert proc.returncode == 0, err.decode(errors="replace")
+        lines.append(out.decode().strip())
+    assert lines.count("NEW") == 10
+    assert lines.count("DUP") == 8
+    monkeypatch.setenv("CK_EVENTS_PATH", str(store))
+    main.load_event_store()
+    keys = set(main.event_log.by_id)
+    assert ("avrone", "shared") in keys
+    assert ("greatscale", "shared") in keys
+    assert sum(1 for source, _eid in keys if source == "avrone" and _eid.startswith("id-")) == 8
+
+
 def test_process_restart_keeps_dedup_and_changes_boot(tmp_path):
     env = os.environ.copy()
     env.update(

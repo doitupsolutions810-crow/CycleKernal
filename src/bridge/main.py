@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import hmac
 import json
 import logging
@@ -805,13 +806,39 @@ def _too_large(max_bytes: int) -> JSONResponse:
     )
 
 
+@contextlib.contextmanager
+def _exclusive_store_lock():
+    """Serialize read-modify-write across processes. The lock file is stable across os.replace."""
+    path = events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path.with_name(path.name + ".lock"), "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
 def _store_event(event: Dict[str, Any]) -> bool:
     """Return True when this source already sent this id. Do not overwrite.
 
     Dedup is (source, id). The same id from another source is a different event.
-    The durable file is replaced before memory changes. A failed write leaves
-    the previous log in place and raises StoreError so the caller does not ack.
+    The lock covers a reload from disk so two processes cannot persist stale snapshots.
+    A failed write leaves the previous log in place and raises StoreError.
     """
+    try:
+        with _exclusive_store_lock():
+            return _store_event_locked(event)
+    except StoreError:
+        raise
+    except Exception as exc:
+        logger.exception("Event store lock failed: %s", exc)
+        raise StoreError("event store unavailable") from exc
+
+
+def _store_event_locked(event: Dict[str, Any]) -> bool:
+    load_event_store()
     if event_log.durable_error:
         raise StoreError("event store corrupt")
     key = _dedup_key(event["source"], event["id"])

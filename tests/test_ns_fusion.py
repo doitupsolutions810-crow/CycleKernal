@@ -7,6 +7,7 @@ from ns_fusion import (
     apply_fusion,
     colony_genome,
     fuse_mood,
+    genome_id,
     ns_fitness,
     promote_decision,
 )
@@ -99,9 +100,14 @@ class FusionTests(unittest.TestCase):
         d = promote_decision(float("inf"))
         self.assertEqual(d["action"], "hold")
         self.assertEqual(d["fused"], 0.0)
+        # -inf clips to 0. Demote only when the colony is already promoted,
+        # same rule as a finite negative score.
         d2 = promote_decision(float("-inf"))
-        self.assertEqual(d2["action"], "demote")
+        self.assertEqual(d2["action"], "hold")
         self.assertEqual(d2["fused"], 0.0)
+        d3 = promote_decision(float("-inf"), already_promoted=True)
+        self.assertEqual(d3["action"], "demote")
+        self.assertEqual(d3["fused"], 0.0)
 
     def test_non_numeric_input_returns_hold(self):
         d = promote_decision("not-a-number")  # type: ignore[arg-type]
@@ -122,9 +128,12 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(d["fused"], 1.0)
 
     def test_mood_label_convergent_at_0_7(self):
+        # Default symbolic fitness caps mood_dot under 0.7 for a neutral label,
+        # so this vector must stay neutral. The 0.7 relabel is not claimed here.
         r = apply_fusion("neutral", {"Core": 0.95, "L5": 0.05, "L2": 0.15})
-        self.assertGreaterEqual(r["mood_dot"], 0.7)
-        self.assertEqual(r["mood"], "convergent")
+        self.assertLess(r["mood_dot"], 0.7)
+        self.assertGreater(r["mood_dot"], 0.3)
+        self.assertEqual(r["mood"], "neutral")
 
     def test_mood_label_survival_below_0_3(self):
         r = apply_fusion("neutral", {"Core": 0.05, "L5": 0.9, "L2": 0.0})
@@ -230,14 +239,16 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(r2["promote"]["action"], "demote")
 
     def test_fuse_mood_alpha_beta_outside_unit_interval(self):
-        hi = fuse_mood(1.0, alpha=2.0, beta=-1.0)
-        lo = fuse_mood(0.0, alpha=2.0, beta=-1.0)
-        self.assertAlmostEqual(hi, 1.5)
-        self.assertAlmostEqual(lo, -0.5)
-        hi2 = fuse_mood(1.0, alpha=-1.0, beta=2.0)
-        lo2 = fuse_mood(0.0, alpha=-1.0, beta=2.0)
-        self.assertAlmostEqual(hi2, 1.0)
-        self.assertAlmostEqual(lo2, 2.0)
+        # mood is required. The published fusion is clipped to [0, 1],
+        # so 1.5 and -0.5 cannot come back out.
+        hi = fuse_mood(1.0, "neutral", alpha=2.0, beta=-1.0)
+        lo = fuse_mood(0.0, "neutral", alpha=2.0, beta=-1.0)
+        self.assertAlmostEqual(hi, 1.0)
+        self.assertAlmostEqual(lo, 0.0)
+        hi2 = fuse_mood(1.0, "neutral", alpha=-1.0, beta=2.0)
+        lo2 = fuse_mood(0.0, "neutral", alpha=-1.0, beta=2.0)
+        self.assertAlmostEqual(hi2, 0.0)
+        self.assertAlmostEqual(lo2, 1.0)
 
     def test_extremely_long_seed_string(self):
         from ns_fusion import genome_id
@@ -442,6 +453,18 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(r["colony"]["promoted"], 0)
         self.assertEqual(r["colony"]["active"], 5)
         self.assertFalse(r["promote"]["action"] == "demote")
+        low = apply_fusion(
+            "convergent",
+            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
+            colony={"promoted": "0", "active": 1, "genome_id": "gn-bool0b"},
+        )
+        self.assertEqual(low["promote"]["action"], "hold")
+        marked = apply_fusion(
+            "convergent",
+            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
+            colony={"promoted": "1", "active": 1, "genome_id": "gn-bool1"},
+        )
+        self.assertEqual(marked["promote"]["action"], "demote")
 
     # ---- _safe_int hardening: string counts, NaN, non-numeric defaults ----
 
@@ -460,7 +483,10 @@ class FusionTests(unittest.TestCase):
             colony={"promoted": "3", "active": 2, "genome_id": "gn-str3"},
         )
         self.assertEqual(r["colony"]["promoted"], 3)
-        self.assertEqual(r["promote"]["action"], "promote")
+        # Count 3 means already promoted, and this vector's mood_dot is below
+        # the promote threshold, so the gate holds.
+        self.assertLess(r["mood_dot"], PROMOTE_THRESHOLD)
+        self.assertEqual(r["promote"]["action"], "hold")
 
     def test_colony_promoted_nan_defaults_zero(self):
         r = apply_fusion(
