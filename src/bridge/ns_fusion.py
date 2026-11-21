@@ -92,7 +92,9 @@ def colony_genome(members: list) -> str:
 
 
 def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, Any]:
-    fused = _safe_float(fused)
+    # Safe-by-default wrapper: clip before thresholding so raw sensor
+    # values outside [0, 1] cannot bypass the hysteresis band.
+    fused = _clip(_safe_float(fused))
     if already_promoted and fused <= DEMOTE_THRESHOLD:
         return {"action": "demote", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
     if (not already_promoted) and fused >= PROMOTE_THRESHOLD:
