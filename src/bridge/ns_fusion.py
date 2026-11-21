@@ -82,9 +82,19 @@ def ns_fitness(
     return _clip((symbolic * neural) ** 0.5)
 
 
+def _canonical_mood(mood: Any) -> str:
+    """Score key. Non-strings, blanks, and unknown text are neutral."""
+    if not isinstance(mood, str):
+        return "neutral"
+    label = mood.strip() or "neutral"
+    if label not in MOOD_SCORE:
+        return "neutral"
+    return label
+
+
 def mood_score(mood: str) -> float:
     # Strip before lookup so padded labels from trait mappers still resolve.
-    return MOOD_SCORE.get((mood or "neutral").strip(), 0.5)
+    return MOOD_SCORE[_canonical_mood(mood)]
 
 
 def fuse_mood(ns_fit: float, mood: str, alpha: float = ALPHA, beta: float = BETA) -> float:
@@ -118,16 +128,21 @@ def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[M
     entropy = _safe_float(metrics.get("L5", metrics.get("entropy", 0.0)))
     coupling = _safe_float(metrics.get("L2", metrics.get("coupling", 0.0)))
     fit = ns_fitness(core=core, entropy=entropy, coupling=coupling)
-    fused = fuse_mood(fit, state_mood)
+    canonical = _canonical_mood(state_mood)
+    fused = fuse_mood(fit, canonical)
+    # Keep a padded known label ("\\tconvergent\\n"). Unknown text becomes neutral.
+    if isinstance(state_mood, str) and (state_mood.strip() or "neutral") in MOOD_SCORE:
+        label = state_mood
+    else:
+        label = "neutral"
     colony = dict(colony or {})
-    # FIX: pass the raw promoted flag. The prior conjunction with the promote
-    # threshold made the demote branch unreachable for any previously promoted
-    # colony whose fused score had fallen below DEMOTE_THRESHOLD.
-    decision = promote_decision(fused, already_promoted=bool(colony.get("promoted", 0)))
-    label = state_mood
-    if fused >= 0.7 and state_mood == "neutral":
+    # Count via _safe_int. bool("0") is True, which used to mark a zero
+    # string count as already promoted and could demote a colony that is not.
+    # A negative count is still a non-zero flag, matching bool(-1).
+    decision = promote_decision(fused, already_promoted=_safe_int(colony.get("promoted", 0)) != 0)
+    if fused >= 0.7 and canonical == "neutral":
         label = "convergent"
-    elif fused < 0.3 and state_mood != "survival":
+    elif fused < 0.3 and canonical != "survival":
         label = "survival"
     return {
         "ns_fitness": round(fit, 4),

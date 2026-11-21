@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import hmac
 import json
 import logging
@@ -36,7 +37,11 @@ from websockets.exceptions import ConnectionClosed
 
 from traits import CognitiveState, map_metrics_to_traits
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S%z",
+)
 logger = logging.getLogger("cognitive-bridge")
 
 VERSION = "3.3.0"
@@ -215,6 +220,11 @@ def events_max_recent() -> int:
     return max(1, _int_env("CK_EVENTS_MAX_RECENT", 100))
 
 
+def events_tombstone_max() -> int:
+    """How many evicted (source, id) pairs stay deduped. Never silently forgotten."""
+    return max(1, _int_env("CK_EVENTS_TOMBSTONE_MAX", 100_000))
+
+
 def events_path() -> Path:
     raw = os.environ.get("CK_EVENTS_PATH", DEFAULT_EVENTS_PATH)
     return Path(raw if raw else DEFAULT_EVENTS_PATH)
@@ -284,7 +294,10 @@ class RelayStatus:
 def _finite_ts(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return time.time()
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return time.time()
     if not math.isfinite(number) or number <= 0:
         return time.time()
     return number
@@ -668,7 +681,7 @@ def load_event_store() -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         events, tombs = _validate_store(data)
     except Exception as exc:
-        logger.error("Event store %s is corrupt and will not be served: %s", path, exc)
+        logger.exception("Event store %s is corrupt and will not be served: %s", path, exc)
         event_log.durable_error = "corrupt"
         event_log.by_id = OrderedDict()
         event_log.tombstones = OrderedDict()
@@ -785,20 +798,47 @@ def _events_auth_failure() -> JSONResponse:
 
 def _too_large(max_bytes: int) -> JSONResponse:
     _reject_event("size")
+    # Do not force Connection: close. That races an in-flight body and can
+    # reset the socket before the client reads this 413.
     return JSONResponse(
         status_code=413,
         content={"detail": f"request body too large (max {max_bytes} bytes)"},
-        headers={"Connection": "close"},
     )
+
+
+@contextlib.contextmanager
+def _exclusive_store_lock():
+    """Serialize read-modify-write across processes. The lock file is stable across os.replace."""
+    path = events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path.with_name(path.name + ".lock"), "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def _store_event(event: Dict[str, Any]) -> bool:
     """Return True when this source already sent this id. Do not overwrite.
 
     Dedup is (source, id). The same id from another source is a different event.
-    The durable file is replaced before memory changes. A failed write leaves
-    the previous log in place and raises StoreError so the caller does not ack.
+    The lock covers a reload from disk so two processes cannot persist stale snapshots.
+    A failed write leaves the previous log in place and raises StoreError.
     """
+    try:
+        with _exclusive_store_lock():
+            return _store_event_locked(event)
+    except StoreError:
+        raise
+    except Exception as exc:
+        logger.exception("Event store lock failed: %s", exc)
+        raise StoreError("event store unavailable") from exc
+
+
+def _store_event_locked(event: Dict[str, Any]) -> bool:
+    load_event_store()
     if event_log.durable_error:
         raise StoreError("event store corrupt")
     key = _dedup_key(event["source"], event["id"])
@@ -808,16 +848,15 @@ def _store_event(event: Dict[str, Any]) -> bool:
     new_events[key] = event
     new_tombs: OrderedDict[tuple[str, str], None] = OrderedDict(event_log.tombstones)
     cap = events_max_recent()
-    seen_cap = max(cap * 10, 1000)
     while len(new_events) > cap:
         old_key, _ = new_events.popitem(last=False)
         new_tombs[old_key] = None
-        while len(new_tombs) > seen_cap:
-            new_tombs.popitem(last=False)
+    if len(new_tombs) > events_tombstone_max():
+        raise StoreError("event store unavailable")
     try:
         _persist_state(new_events, new_tombs)
     except Exception as exc:
-        logger.error("Event store write failed: %s", exc)
+        logger.exception("Event store write failed: %s", exc)
         raise StoreError("event store unavailable") from exc
     event_log.by_id = new_events
     event_log.tombstones = new_tombs
@@ -853,7 +892,7 @@ async def post_event(request: Request):
         return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
     try:
         payload = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         _reject_event("body")
         return JSONResponse(status_code=400, content={"detail": "body must be JSON"})
     event, detail = normalize_event(payload)
