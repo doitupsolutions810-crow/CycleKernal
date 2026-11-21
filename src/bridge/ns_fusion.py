@@ -74,7 +74,8 @@ def ns_fitness(
 
 
 def mood_score(mood: str) -> float:
-    return MOOD_SCORE.get(mood or "neutral", 0.5)
+    # Strip before lookup so padded labels from trait mappers still resolve.
+    return MOOD_SCORE.get((mood or "neutral").strip(), 0.5)
 
 
 def fuse_mood(ns_fit: float, mood: str, alpha: float = ALPHA, beta: float = BETA) -> float:
