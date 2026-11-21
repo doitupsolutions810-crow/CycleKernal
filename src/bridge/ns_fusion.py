@@ -7,6 +7,7 @@ Promotion is gated on mood_dot, not on raw symbolic score alone.
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any, Dict, Mapping, Optional
 
 ALPHA = 0.65
@@ -27,12 +28,23 @@ def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, float(value)))
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Parse to float, rejecting NaN and Inf. Non-numeric input returns default."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(v) or math.isinf(v):
+        return default
+    return v
+
+
 def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> float:
     """Constraint side: truth alignment plus resource viability."""
-    truth = _clip(float(belief.get("truth", 0.5)))
-    attention = float(resources.get("attention", 0.0))
-    compute = float(resources.get("compute", 0.0))
-    memory_nodes = float(resources.get("memory_nodes", 0.0))
+    truth = _clip(_safe_float(belief.get("truth", 0.5)))
+    attention = _safe_float(resources.get("attention", 0.0))
+    compute = _safe_float(resources.get("compute", 0.0))
+    memory_nodes = _safe_float(resources.get("memory_nodes", 0.0))
     viable = _clip((attention / 150.0) * 0.45 + (compute / 40.0) * 0.35 + (memory_nodes / 8.0) * 0.20)
     # Symbolic preference: high truth and enough resources to act on it.
     return _clip(0.55 * truth + 0.45 * viable)
@@ -40,9 +52,9 @@ def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> f
 
 def neural_score(core: float, entropy: float, coupling: float) -> float:
     """Neural / LoopMem side. High entropy is exploratory, not automatically fit."""
-    stability = 1.0 - _clip(entropy)
-    bind = _clip(coupling / 0.2)
-    return _clip(0.5 * _clip(core) + 0.3 * stability + 0.2 * bind)
+    stability = 1.0 - _clip(_safe_float(entropy))
+    bind = _clip(_safe_float(coupling) / 0.2)
+    return _clip(0.5 * _clip(_safe_float(core)) + 0.3 * stability + 0.2 * bind)
 
 
 def ns_fitness(
@@ -66,7 +78,7 @@ def mood_score(mood: str) -> float:
 
 
 def fuse_mood(ns_fit: float, mood: str, alpha: float = ALPHA, beta: float = BETA) -> float:
-    return _clip(alpha * _clip(ns_fit) + beta * mood_score(mood))
+    return _clip(alpha * _clip(_safe_float(ns_fit)) + beta * mood_score(mood))
 
 
 def genome_id(seed: str) -> str:
@@ -80,7 +92,8 @@ def colony_genome(members: list) -> str:
 
 
 def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, Any]:
-    if already_promoted and fused < DEMOTE_THRESHOLD:
+    fused = _safe_float(fused)
+    if already_promoted and fused <= DEMOTE_THRESHOLD:
         return {"action": "demote", "fused": round(fused, 4), "threshold": DEMOTE_THRESHOLD}
     if (not already_promoted) and fused >= PROMOTE_THRESHOLD:
         return {"action": "promote", "fused": round(fused, 4), "threshold": PROMOTE_THRESHOLD}
@@ -89,9 +102,9 @@ def promote_decision(fused: float, already_promoted: bool = False) -> Dict[str, 
 
 def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Attach fused mood fields onto a trait-mapper result."""
-    core = float(metrics.get("Core", metrics.get("core", 0.5)))
-    entropy = float(metrics.get("L5", metrics.get("entropy", 0.0)))
-    coupling = float(metrics.get("L2", metrics.get("coupling", 0.0)))
+    core = _safe_float(metrics.get("Core", metrics.get("core", 0.5)), 0.5)
+    entropy = _safe_float(metrics.get("L5", metrics.get("entropy", 0.0)))
+    coupling = _safe_float(metrics.get("L2", metrics.get("coupling", 0.0)))
     fit = ns_fitness(core=core, entropy=entropy, coupling=coupling)
     fused = fuse_mood(fit, state_mood)
     colony = dict(colony or {})

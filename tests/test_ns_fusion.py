@@ -1,7 +1,15 @@
 import hashlib
 import math
 import unittest
-from ns_fusion import fuse_mood, ns_fitness, promote_decision, colony_genome
+from ns_fusion import (
+    DEMOTE_THRESHOLD,
+    PROMOTE_THRESHOLD,
+    apply_fusion,
+    colony_genome,
+    fuse_mood,
+    ns_fitness,
+    promote_decision,
+)
 
 
 class FusionTests(unittest.TestCase):
@@ -37,41 +45,95 @@ class FusionTests(unittest.TestCase):
         self.assertTrue(colony_genome(["civ_0"]).startswith("gn-"))
 
     # GS-LVI seam: quotient-circle contraction
-    # Public Great Scale docs describe a modulo-nine circle with involution,
-    # but soft_contract is an affine map on the real line. On the quotient,
-    # C(x+9n) - C(x) = 9kn, a multiple of 9 only when k is an integer.
-    # Under |k|<1 the only integer is k=0, so the circle fiber is
-    # non-constant: equivalent states map to non-equivalent outputs.
     def test_quotient_seam_zero_and_nine_non_equivalent(self):
         FIXED, k = 4.5, 0.5
         c0 = FIXED + k * (0 - FIXED)    # 2.25
         c9 = FIXED + k * (9 - FIXED)    # 6.75
-        # modular distance on the circle
         d = abs(((c0 - c9) % 9 + 9) % 9)
         qd = min(d, 9 - d)
         self.assertAlmostEqual(qd, 4.5, places=9)
         self.assertGreater(abs(c0 - c9) % 9, 1e-9)
 
     def test_affine_map_not_circle_native_under_strict_k(self):
-        # |k|<1 admits no nonzero integer k → fiber non-constant
         self.assertNotAlmostEqual(
             4.5 + 0.5 * (0 - 4.5),   # C(0) = 2.25
             4.5 + 0.5 * (9 - 4.5),   # C(9) = 6.75
         )
 
     def test_softmap_collapse_cannot_preserve_two_cycles(self):
-        # soft_map(x) = 9-x is a pure involution; at k=0.5 the affine
-        # attractor is the constant 4.5. They agree only at the fixed point.
         self.assertNotAlmostEqual(9 - 2, 4.5 + 0.5 * (2 - 4.5))
         self.assertAlmostEqual(9 - 2, 7.0, places=9)
 
     def test_identity_hash_no_collision(self):
-        # sha256 digest keys: alice123 and alice199 must not alias
         def civ_id(uid):
             return "user_" + hashlib.sha256(uid.encode()).hexdigest()[:12]
         self.assertNotEqual(civ_id("alice123"), civ_id("alice199"))
-        # legacy slice still collides (documents the defect being replaced)
         self.assertEqual("user_alice1", "user_alice1")
+
+    # ---- boundary / edge-case additions ----
+
+    def test_demote_at_exact_threshold_floor(self):
+        # inclusive bound: fused == 0.28 with promoted colony must demote,
+        # not fall into the hysteresis dead zone
+        d = promote_decision(DEMOTE_THRESHOLD, already_promoted=True)
+        self.assertEqual(d["action"], "demote")
+        self.assertEqual(d["fused"], 0.28)
+
+    def test_demote_just_below_threshold(self):
+        d = promote_decision(DEMOTE_THRESHOLD - 1e-9, already_promoted=True)
+        self.assertEqual(d["action"], "demote")
+
+    def test_promote_at_exact_threshold_floor(self):
+        d = promote_decision(PROMOTE_THRESHOLD, already_promoted=False)
+        self.assertEqual(d["action"], "promote")
+        self.assertEqual(d["fused"], 0.62)
+
+    def test_promote_just_above_threshold(self):
+        d = promote_decision(PROMOTE_THRESHOLD + 1e-9, already_promoted=False)
+        self.assertEqual(d["action"], "promote")
+
+    def test_nan_input_returns_hold_not_exception(self):
+        d = promote_decision(float("nan"))
+        self.assertEqual(d["action"], "hold")
+        self.assertEqual(d["fused"], 0.0)
+
+    def test_non_numeric_input_returns_hold(self):
+        d = promote_decision("not-a-number")  # type: ignore[arg-type]
+        self.assertEqual(d["action"], "hold")
+
+    def test_negative_input_clipped_to_zero(self):
+        d = promote_decision(-0.5)
+        self.assertEqual(d["action"], "hold")
+        self.assertEqual(d["fused"], 0.0)
+
+    def test_over_one_input_clipped(self):
+        d = promote_decision(1.5)
+        self.assertEqual(d["action"], "promote")
+        self.assertEqual(d["fused"], 1.0)
+
+    def test_mood_label_convergent_at_0_7(self):
+        r = apply_fusion("neutral", {"Core": 0.95, "L5": 0.05, "L2": 0.15})
+        self.assertGreaterEqual(r["mood_dot"], 0.7)
+        self.assertEqual(r["mood"], "convergent")
+
+    def test_mood_label_survival_below_0_3(self):
+        r = apply_fusion("neutral", {"Core": 0.05, "L5": 0.9, "L2": 0.0})
+        self.assertLess(r["mood_dot"], 0.3)
+        self.assertEqual(r["mood"], "survival")
+
+    def test_empty_colony_genome(self):
+        self.assertTrue(colony_genome([]).startswith("gn-"))
+        self.assertEqual(colony_genome([]), colony_genome([]))
+
+    def test_fallen_colony_demotion_through_apply_fusion(self):
+        r = apply_fusion(
+            "convergent",
+            {"Core": 0.05, "L5": 0.95, "L2": 0.0},
+            colony={"promoted": 1, "active": 3, "genome_id": "gn-test"},
+        )
+        self.assertEqual(r["promote"]["action"], "demote")
+        self.assertEqual(r["colony"]["promoted"], 1)  # flag preserved in output
+        self.assertEqual(r["colony"]["genome_id"], "gn-test")
 
 
 if __name__ == "__main__":
