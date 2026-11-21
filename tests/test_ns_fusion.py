@@ -368,6 +368,81 @@ class FusionTests(unittest.TestCase):
         r_num = apply_fusion("neutral", {"Core": 1.0, "L5": 0.0, "L2": 1.0})
         self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
 
+    # ---- escalation batch: empty metrics, unknown keys, whitespace seed,
+    # mixed genome types, numeric-string mood, non-string fuse_mood,
+    # non-numeric promote string, zero-zero counts, near-float-max ----
+
+    def test_apply_fusion_empty_metrics_dict(self):
+        r = apply_fusion("neutral", {})
+        self.assertIn("ns_fitness", r)
+        self.assertIn("mood_dot", r)
+        self.assertEqual(r["mood"], "neutral")
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+
+    def test_apply_fusion_unknown_extra_keys_in_metrics(self):
+        # extra keys should be ignored silently
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.8, "L5": 0.1, "L2": 0.1, "mystery": 999, "foo": "bar"},
+        )
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+        self.assertFalse(math.isnan(r["mood_dot"]))
+        r_base = apply_fusion("neutral", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
+        self.assertEqual(r["ns_fitness"], r_base["ns_fitness"])
+
+    def test_genome_id_whitespace_only_seed(self):
+        from ns_fusion import genome_id
+        g = genome_id("   ")
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, genome_id("   "))
+        self.assertNotEqual(g, genome_id(""))
+
+    def test_colony_genome_mixed_string_and_non_string(self):
+        g1 = colony_genome(["x", 42, 3.14, False])
+        g2 = colony_genome(["x", "42", "3.14", "False"])
+        self.assertEqual(g1, g2)
+        self.assertTrue(g1.startswith("gn-"))
+
+    def test_mood_score_numeric_string(self):
+        from ns_fusion import mood_score
+        # "0.72" is not a known label → defaults to 0.5, no crash
+        self.assertEqual(mood_score("0.72"), 0.5)
+        self.assertEqual(mood_score("0.15"), 0.5)
+
+    def test_fuse_mood_non_string_mood(self):
+        # mood or "neutral" coerces non-string → "neutral"
+        self.assertEqual(fuse_mood(0.9, 123), fuse_mood(0.9, "neutral"))  # type: ignore[arg-type]
+        self.assertEqual(fuse_mood(0.9, None), fuse_mood(0.9, "neutral"))  # type: ignore[arg-type]
+
+    def test_promote_decision_non_numeric_string(self):
+        d = promote_decision("0.9")  # type: ignore[arg-type]
+        # _safe_float parses "0.9" → 0.9 → clipped → 0.9 → promote
+        self.assertEqual(d["action"], "promote")
+        self.assertEqual(d["fused"], 0.9)
+
+    def test_apply_fusion_zero_zero_counts(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.0, "L2": 0.0},
+            colony={"promoted": 0, "active": 0, "held": 0, "dormant": 0},
+        )
+        self.assertEqual(r["colony"]["active"], 0)
+        self.assertEqual(r["colony"]["promoted"], 0)
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+
+    def test_apply_fusion_metrics_near_float_max(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 1.7976931348623157e+308, "L5": 1.7976931348623157e+308, "L2": 1.7976931348623157e+308},
+        )
+        # _safe_float passes finite-but-huge values; _clip bounds them
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+        self.assertFalse(math.isnan(r["mood_dot"]))
+        self.assertLessEqual(r["ns_fitness"], 1.0)
+        self.assertLessEqual(r["mood_dot"], 1.0)
+        self.assertGreaterEqual(r["ns_fitness"], 0.0)
+        self.assertGreaterEqual(r["mood_dot"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
