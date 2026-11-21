@@ -22,7 +22,8 @@ The old fixed sample heartbeat runs only when `CK_SYNTHETIC=1`. `GET /health` re
 | `CK_EVENTS_TOKEN` | unset | Also accepted. Bearer, `X-Admin-Token`, or `X-Events-Token`. Copy `.env.example` |
 | `CK_EVENTS_TOKEN_PREVIOUS` | unset | Still accepted while the current token is rotated |
 | `CK_EVENTS_MAX_BYTES` | `4096` | Body cap. Values above 4096 are clamped. Checked before auth |
-| `CK_EVENTS_MAX_RECENT` | `100` | Visible ring. Evicted ids still answer `duplicate: true` |
+| `CK_EVENTS_MAX_RECENT` | `100` | Visible ring. Evicted `(source, id)` pairs stay in the dedup set |
+| `CK_EVENTS_TOMBSTONE_MAX` | `100000` | When remembering another evicted id would pass this, the post is 503 and nothing is forgotten |
 | `CK_EVENTS_PATH` | `/var/lib/cyclekernel/events.json` | Durable events and dedup tombstones. A corrupt file fails closed (503) and is not deleted |
 
 ## HTTP
