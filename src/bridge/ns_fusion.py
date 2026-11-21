@@ -39,6 +39,15 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     return v
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Parse to int via _safe_float so string counts don't crash or lie.
+
+    String "0" yields 0 (not True via bool quirk), "3.5" yields 3,
+    "abc" yields default. NaN/Inf yield default.
+    """
+    return int(_safe_float(value, default))
+
+
 def symbolic_score(belief: Mapping[str, Any], resources: Mapping[str, Any]) -> float:
     """Constraint side: truth alignment plus resource viability."""
     truth = _clip(_safe_float(belief.get("truth", 0.5)))
@@ -129,10 +138,10 @@ def apply_fusion(state_mood: str, metrics: Mapping[str, Any], colony: Optional[M
         "promote": decision,
         "genome_id": colony.get("genome_id") or genome_id(f"{label}:{fit:.4f}:{core:.3f}"),
         "colony": {
-            "active": int(colony.get("active", 0)),
-            "promoted": int(colony.get("promoted", 0)),
-            "held": int(colony.get("held", 0)),
-            "dormant": int(colony.get("dormant", 0)),
+            "active": _safe_int(colony.get("active", 0)),
+            "promoted": _safe_int(colony.get("promoted", 0)),
+            "held": _safe_int(colony.get("held", 0)),
+            "dormant": _safe_int(colony.get("dormant", 0)),
             "genome_id": colony.get("genome_id") or "",
         },
     }
