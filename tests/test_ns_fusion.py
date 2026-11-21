@@ -197,6 +197,70 @@ class FusionTests(unittest.TestCase):
         n = neural_score(1.0, 1.0, 0.2)
         self.assertLess(n, 1.0)
 
+    # ---- new escalation batch ----
+
+    def test_unicode_and_emoji_mood_labels(self):
+        # non-ASCII mood strings should not crash; unknown labels default neutral
+        r1 = apply_fusion("🚀 convergent ☃", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
+        r2 = apply_fusion("neutral", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
+        self.assertEqual(r1["mood"], r2["mood"])
+        self.assertFalse(math.isnan(r1["mood_dot"]))
+        r3 = fuse_mood(0.9, "✨ sparkle ✨")
+        self.assertEqual(r3, fuse_mood(0.9, "neutral"))
+
+    def test_empty_string_seed_genome_id(self):
+        from ns_fusion import genome_id
+        g = genome_id("")
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, genome_id(""))
+        self.assertNotEqual(g, genome_id("seed-a"))
+
+    def test_colony_genome_non_string_members(self):
+        # mixed types should coerce to string without crashing
+        g1 = colony_genome(["a", 1, None, True])
+        g2 = colony_genome(["a", "1", "None", "True"])
+        self.assertEqual(g1, g2)
+        self.assertTrue(g1.startswith("gn-"))
+
+    def test_negative_active_and_promoted_counts(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.7, "L5": 0.2, "L2": 0.1},
+            colony={"promoted": -3, "active": -7, "genome_id": "gn-neg"},
+        )
+        self.assertEqual(r["colony"]["promoted"], -3)
+        self.assertEqual(r["colony"]["active"], -7)
+        self.assertEqual(r["colony"]["genome_id"], "gn-neg")
+        # negative promoted with low fused should still demote
+        r2 = apply_fusion(
+            "convergent",
+            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
+            colony={"promoted": -1, "active": 2, "genome_id": "gn-neg2"},
+        )
+        self.assertEqual(r2["promote"]["action"], "demote")
+
+    def test_fuse_mood_alpha_beta_outside_unit_interval(self):
+        # alpha=2, beta=-1: fused = 2*x + (-1)*0.5 = 2x - 0.5
+        # at x=1: 1.5; at x=0: -0.5. Should not crash.
+        hi = fuse_mood(1.0, alpha=2.0, beta=-1.0)
+        lo = fuse_mood(0.0, alpha=2.0, beta=-1.0)
+        self.assertAlmostEqual(hi, 1.5)
+        self.assertAlmostEqual(lo, -0.5)
+        # alpha=-1, beta=2: at x=1: -1+2=1; at x=0: 2
+        hi2 = fuse_mood(1.0, alpha=-1.0, beta=2.0)
+        lo2 = fuse_mood(0.0, alpha=-1.0, beta=2.0)
+        self.assertAlmostEqual(hi2, 1.0)
+        self.assertAlmostEqual(lo2, 2.0)
+
+    def test_extremely_long_seed_string(self):
+        from ns_fusion import genome_id
+        long_seed = "x" * 1_000_000
+        g = genome_id(long_seed)
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, genome_id(long_seed))
+        # different long seeds differ
+        self.assertNotEqual(g, genome_id("y" * 1_000_000))
+
 
 if __name__ == "__main__":
     unittest.main()
