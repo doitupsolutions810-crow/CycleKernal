@@ -110,20 +110,19 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(d["action"], "hold")
         self.assertEqual(d["fused"], 0.0)
 
-    def test_negative_input_passes_through_unclipped(self):
-        # promote_decision does not clip; _clip lives in scoring helpers.
-        # -0.5 is below DEMOTE_THRESHOLD, so an already-promoted colony demotes.
+    def test_negative_input_clips_to_zero(self):
+        # promote_decision clips via _clip before thresholding
         d = promote_decision(-0.5)
         self.assertEqual(d["action"], "hold")
-        self.assertEqual(d["fused"], -0.5)
+        self.assertEqual(d["fused"], 0.0)
         d2 = promote_decision(-0.5, already_promoted=True)
         self.assertEqual(d2["action"], "demote")
-        self.assertEqual(d2["fused"], -0.5)
+        self.assertEqual(d2["fused"], 0.0)
 
-    def test_over_one_input_passes_through_unclipped(self):
+    def test_over_one_input_clips_to_one(self):
         d = promote_decision(1.5)
         self.assertEqual(d["action"], "promote")
-        self.assertEqual(d["fused"], 1.5)
+        self.assertEqual(d["fused"], 1.0)
 
     def test_mood_label_convergent_at_0_7(self):
         r = apply_fusion("neutral", {"Core": 0.95, "L5": 0.05, "L2": 0.15})
