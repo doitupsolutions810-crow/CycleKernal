@@ -201,7 +201,7 @@ class FusionTests(unittest.TestCase):
 
     def test_unicode_and_emoji_mood_labels(self):
         # non-ASCII mood strings should not crash; unknown labels default neutral
-        r1 = apply_fusion("🚀 convergent ☃", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
+        r1 = apply_fusion("🚀 convergent ☾", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
         r2 = apply_fusion("neutral", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
         self.assertEqual(r1["mood"], r2["mood"])
         self.assertFalse(math.isnan(r1["mood_dot"]))
@@ -260,6 +260,47 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(g, genome_id(long_seed))
         # different long seeds differ
         self.assertNotEqual(g, genome_id("y" * 1_000_000))
+
+    # ---- whitespace / None / bytes / string-number batch ----
+
+    def test_mood_whitespace_does_not_match_label(self):
+        # leading/trailing whitespace means the key lookup misses → neutral default
+        from ns_fusion import mood_score
+        self.assertEqual(mood_score(" neutral "), 0.5)
+        self.assertEqual(mood_score("\tneutral\n"), 0.5)
+        r = apply_fusion(" neutral ", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
+        self.assertEqual(r["mood"], " neutral ")  # label preserved as-is
+        self.assertFalse(math.isnan(r["mood_dot"]))
+
+    def test_mood_score_none_directly(self):
+        from ns_fusion import mood_score
+        # mood or "neutral" coerces None → "neutral"
+        self.assertEqual(mood_score(None), 0.50)
+        self.assertEqual(mood_score(""), 0.50)
+
+    def test_genome_id_rejects_raw_bytes(self):
+        from ns_fusion import genome_id
+        # str.encode exists; bytes.encode does not → AttributeError
+        with self.assertRaises(AttributeError):
+            genome_id(b"not-a-string")  # type: ignore[arg-type]
+
+    def test_colony_genome_explicit_none_only(self):
+        g = colony_genome([None])
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, colony_genome(["None"]))
+
+    def test_apply_fusion_string_numbers_in_metrics(self):
+        # _safe_float parses numeric strings
+        r = apply_fusion(
+            "neutral",
+            {"Core": "0.8", "L5": "0.2", "L2": "0.1"},
+        )
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+        self.assertFalse(math.isnan(r["mood_dot"]))
+        self.assertGreater(r["ns_fitness"], 0.0)
+        # string "0.8" should score like float 0.8
+        r_num = apply_fusion("neutral", {"Core": 0.8, "L5": 0.2, "L2": 0.1})
+        self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
 
 
 if __name__ == "__main__":
