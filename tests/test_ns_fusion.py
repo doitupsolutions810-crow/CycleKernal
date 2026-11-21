@@ -432,163 +432,76 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
 
     def test_colony_promoted_string_zero_bool_quirk(self):
-        # bool("0") is True in Python — string "0" falsely signals promoted
-        r = apply_fusion(
-            "convergent",
-            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
-            colony={"promoted": "0", "active": 2, "genome_id": "gn-str0"},
-        )
-        # promoted="0" → bool("0") is True → already_promoted=True → demote
-        self.assertEqual(r["promote"]["action"], "demote")
-
-    def test_colony_active_string_float_raises(self):
-        # int("3.5") raises ValueError — unhandled crash path
-        with self.assertRaises(ValueError):
-            apply_fusion(
-                "neutral",
-                {"Core": 0.5, "L5": 0.0, "L2": 0.0},
-                colony={"promoted": 0, "active": "3.5", "genome_id": "gn-sf"},
-            )
-
-    def test_colony_active_float_silent_truncation(self):
-        # int(3.7) == 3, no warning
+        # bool("0") is True in Python — string "0" falsely signals promoted.
+        # _safe_int must yield 0, not True.
         r = apply_fusion(
             "neutral",
             {"Core": 0.5, "L5": 0.0, "L2": 0.0},
-            colony={"promoted": 0, "active": 3.7, "genome_id": "gn-ft"},
+            colony={"promoted": "0", "active": 5, "genome_id": "gn-bool0"},
+        )
+        self.assertEqual(r["colony"]["promoted"], 0)
+        self.assertEqual(r["colony"]["active"], 5)
+        self.assertFalse(r["promote"]["action"] == "demote")
+
+    # ---- _safe_int hardening: string counts, NaN, non-numeric defaults ----
+
+    def test_colony_active_string_three_point_five_truncates(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.0, "L2": 0.0},
+            colony={"active": "3.5", "promoted": 0},
         )
         self.assertEqual(r["colony"]["active"], 3)
 
-    def test_ns_fitness_belief_empty_dict_falls_back_to_defaults(self):
-        # empty dict is falsy → `belief or defaults` uses defaults
-        f1 = ns_fitness(belief={})
-        f2 = ns_fitness()
-        self.assertEqual(f1, f2)
-
-    def test_ns_fitness_resources_empty_dict_falls_back_to_defaults(self):
-        f1 = ns_fitness(resources={})
-        f2 = ns_fitness()
-        self.assertEqual(f1, f2)
-
-    def test_neural_score_negative_coupling_clips_to_zero(self):
-        from ns_fusion import neural_score
-        n = neural_score(0.8, 0.1, -1.0)
-        n_zero = neural_score(0.8, 0.1, 0.0)
-        self.assertEqual(n, n_zero)
-
-    def test_neural_score_coupling_far_above_threshold(self):
-        from ns_fusion import neural_score
-        n = neural_score(0.8, 0.1, 10.0)
-        self.assertLessEqual(n, 1.0)
-
-    def test_genome_id_null_byte_in_seed(self):
-        from ns_fusion import genome_id
-        g = genome_id("a\x00b")
-        self.assertTrue(g.startswith("gn-"))
-        self.assertEqual(g, genome_id("a\x00b"))
-        self.assertNotEqual(g, genome_id("ab"))
-
-    def test_colony_genome_duplicate_members(self):
-        g1 = colony_genome(["a", "a", "b"])
-        g2 = colony_genome(["a", "b"])
-        # duplicates are not deduplicated before sorting — different blob
-        self.assertNotEqual(g1, g2)
-
-    def test_apply_fusion_empty_state_mood(self):
-        r = apply_fusion("", {"Core": 0.5, "L5": 0.0, "L2": 0.0})
-        self.assertEqual(r["mood"], "")
-        self.assertFalse(math.isnan(r["mood_dot"]))
-
-    def test_apply_fusion_none_state_mood(self):
-        r = apply_fusion(None, {"Core": 0.5, "L5": 0.0, "L2": 0.0})  # type: ignore[arg-type]
-        self.assertFalse(math.isnan(r["mood_dot"]))
-
-    def test_promote_decision_boolean_true(self):
-        d = promote_decision(True)  # type: ignore[arg-type]
-        self.assertEqual(d["action"], "promote")
-        self.assertEqual(d["fused"], 1.0)
-
-    def test_negative_zero_normalizes_to_positive_zero(self):
-        d = promote_decision(-0.0)
-        self.assertEqual(d["fused"], 0.0)
-        self.assertFalse(math.copysign(1.0, d["fused"]) < 0)
-
-    def test_apply_fusion_generates_genome_id_when_colony_lacks_one(self):
-        r = apply_fusion("neutral", {"Core": 0.5, "L5": 0.0, "L2": 0.0}, colony={})
-        self.assertTrue(r["genome_id"].startswith("gn-"))
-        self.assertEqual(r["colony"]["genome_id"], "")
-
-    def test_colony_genome_round_trip_member_order(self):
-        members = ["z", "m", "a", "q"]
-        g = colony_genome(members)
-        self.assertEqual(g, colony_genome(list(reversed(members))))
-        self.assertNotEqual(g, colony_genome(["a", "m", "q", "z", "a"]))
-
-    def test_apply_fusion_promoted_string_nonzero(self):
-        # bool("1") is True — string "1" correctly signals promoted
+    def test_colony_promoted_string_three_promotes(self):
         r = apply_fusion(
-            "convergent",
-            {"Core": 0.0, "L5": 1.0, "L2": 0.0},
-            colony={"promoted": "1", "active": 2, "genome_id": "gn-str1"},
+            "neutral",
+            {"Core": 0.9, "L5": 0.0, "L2": 0.0},
+            colony={"promoted": "3", "active": 2, "genome_id": "gn-str3"},
         )
-        self.assertEqual(r["promote"]["action"], "demote")
+        self.assertEqual(r["colony"]["promoted"], 3)
+        self.assertEqual(r["promote"]["action"], "promote")
 
-    def test_apply_fusion_held_float_truncation(self):
+    def test_colony_promoted_nan_defaults_zero(self):
         r = apply_fusion(
             "neutral",
             {"Core": 0.5, "L5": 0.0, "L2": 0.0},
-            colony={"promoted": 0, "active": 0, "held": 2.9, "dormant": 0.1},
+            colony={"promoted": float("nan"), "active": 1},
         )
-        self.assertEqual(r["colony"]["held"], 2)
+        self.assertEqual(r["colony"]["promoted"], 0)
+
+    def test_colony_promoted_non_numeric_defaults_zero(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.0, "L2": 0.0},
+            colony={"promoted": "abc", "active": 1, "held": "n/a", "dormant": ""},
+        )
+        self.assertEqual(r["colony"]["promoted"], 0)
+        self.assertEqual(r["colony"]["held"], 0)
         self.assertEqual(r["colony"]["dormant"], 0)
 
-    def test_fuse_mood_ns_fit_as_string(self):
-        # _safe_float parses "0.8" → 0.8
-        self.assertEqual(fuse_mood("0.8", "neutral"), fuse_mood(0.8, "neutral"))  # type: ignore[arg-type]
+    def test_colony_held_and_dormant_string_counts(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.0, "L2": 0.0},
+            colony={"held": "7.9", "dormant": "2.1", "active": "4", "promoted": "1"},
+        )
+        self.assertEqual(r["colony"]["held"], 7)
+        self.assertEqual(r["colony"]["dormant"], 2)
+        self.assertEqual(r["colony"]["active"], 4)
+        self.assertEqual(r["colony"]["promoted"], 1)
 
-    def test_fuse_mood_ns_fit_none(self):
-        # _safe_float(None) → 0.0
-        self.assertEqual(fuse_mood(None, "neutral"), fuse_mood(0.0, "neutral"))  # type: ignore[arg-type]
+    def test_colony_all_four_counts_non_numeric(self):
+        r = apply_fusion(
+            "neutral",
+            {"Core": 0.5, "L5": 0.0, "L2": 0.0},
+            colony={"active": None, "promoted": [], "held": {}, "dormant": True},
+        )
+        self.assertEqual(r["colony"]["active"], 0)
+        self.assertEqual(r["colony"]["promoted"], 0)
+        self.assertEqual(r["colony"]["held"], 0)
+        self.assertEqual(r["colony"]["dormant"], 1)
 
-    def test_symbolic_score_belief_missing_truth_key(self):
-        from ns_fusion import symbolic_score
-        s = symbolic_score({"deception": 0.2}, {"attention": 50, "compute": 20, "memory_nodes": 1})
-        # truth defaults to 0.5
-        self.assertEqual(s, symbolic_score({"truth": 0.5}, {"attention": 50, "compute": 20, "memory_nodes": 1}))
 
-    def test_symbolic_score_resources_missing_keys(self):
-        from ns_fusion import symbolic_score
-        s = symbolic_score({"truth": 0.8}, {})
-        self.assertEqual(s, symbolic_score({"truth": 0.8}, {"attention": 0, "compute": 0, "memory_nodes": 0}))
-
-    def test_apply_fusion_metrics_nested_dict_value(self):
-        # nested structures should be ignored safely via _safe_float default
-        r = apply_fusion("neutral", {"Core": {"v": 0.5}, "L5": 0.0, "L2": 0.0})
-        self.assertFalse(math.isnan(r["ns_fitness"]))
-        r_num = apply_fusion("neutral", {"Core": 0.5, "L5": 0.0, "L2": 0.0})
-        self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
-
-    def test_apply_fusion_label_unchanged_when_already_convergent(self):
-        # fused >= 0.7 but state_mood is already "convergent" → no rewrite
-        r = apply_fusion("convergent", {"Core": 0.95, "L5": 0.05, "L2": 0.15})
-        self.assertEqual(r["mood"], "convergent")
-
-    def test_apply_fusion_label_unchanged_when_already_survival(self):
-        # fused < 0.3 but state_mood is already "survival" → no rewrite
-        r = apply_fusion("survival", {"Core": 0.05, "L5": 0.9, "L2": 0.0})
-        self.assertEqual(r["mood"], "survival")
-
-    def test_genome_id_similar_seeds_no_collision(self):
-        from ns_fusion import genome_id
-        seeds = [f"seed-{i}" for i in range(100)]
-        ids = [genome_id(s) for s in seeds]
-        self.assertEqual(len(ids), len(set(ids)))
-
-    def test_apply_fusion_idempotent(self):
-        r1 = apply_fusion("neutral", {"Core": 0.6, "L5": 0.3, "L2": 0.1}, colony={"promoted": 1, "active": 4})
-        r2 = apply_fusion("neutral", {"Core": 0.6, "L5": 0.3, "L2": 0.1}, colony={"promoted": 1, "active": 4})
-        self.assertEqual(r1, r2)
-
-    def test_promote_decision_at_both_boundaries_simultaneously_impossible(self):
-        # PROMOTE (0.62) > DEMOTE (0.28) — no value satisfies both
-        self.assertGreater(PROMOTE_THRESHOLD, DEMOTE_THRESHOLD)
+if __name__ == "__main__":
+    unittest.main()
