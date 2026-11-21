@@ -263,14 +263,20 @@ class FusionTests(unittest.TestCase):
 
     # ---- whitespace / None / bytes / string-number batch ----
 
-    def test_mood_whitespace_does_not_match_label(self):
-        # leading/trailing whitespace means the key lookup misses → neutral default
+    def test_mood_whitespace_strips_to_canonical_label(self):
+        # mood_score now strips before lookup, so padded labels resolve
         from ns_fusion import mood_score
-        self.assertEqual(mood_score(" neutral "), 0.5)
-        self.assertEqual(mood_score("\tneutral\n"), 0.5)
+        self.assertEqual(mood_score(" neutral "), 0.50)
+        self.assertEqual(mood_score("\tneutral\n"), 0.50)
+        self.assertEqual(mood_score("  convergent  "), 0.72)
+        self.assertEqual(mood_score("\tsurvival\n"), 0.15)
         r = apply_fusion(" neutral ", {"Core": 0.8, "L5": 0.1, "L2": 0.1})
-        self.assertEqual(r["mood"], " neutral ")  # label preserved as-is
+        self.assertEqual(r["mood"], " neutral ")  # raw label still preserved in output
         self.assertFalse(math.isnan(r["mood_dot"]))
+        # padded convergent should score like canonical convergent
+        r_pad = fuse_mood(0.9, "  convergent  ")
+        r_can = fuse_mood(0.9, "convergent")
+        self.assertEqual(r_pad, r_can)
 
     def test_mood_score_none_directly(self):
         from ns_fusion import mood_score
@@ -300,6 +306,66 @@ class FusionTests(unittest.TestCase):
         self.assertGreater(r["ns_fitness"], 0.0)
         # string "0.8" should score like float 0.8
         r_num = apply_fusion("neutral", {"Core": 0.8, "L5": 0.2, "L2": 0.1})
+        self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
+
+    # ---- next escalation batch: strip-aware + deeper seams ----
+
+    def test_mood_score_internal_whitespace_not_stripped(self):
+        # only leading/trailing stripped; internal spaces still miss
+        from ns_fusion import mood_score
+        self.assertEqual(mood_score("balanced tension"), 0.5)  # space, not hyphen
+        self.assertEqual(mood_score("balanced-tension"), 0.58)
+
+    def test_fuse_mood_with_stripped_padded_mood(self):
+        # fuse_mood inherits stripping via mood_score
+        self.assertEqual(fuse_mood(1.0, " divergent "), fuse_mood(1.0, "divergent"))
+        self.assertNotEqual(fuse_mood(1.0, " divergent "), fuse_mood(1.0, "neutral"))
+
+    def test_apply_fusion_preserves_raw_padded_label(self):
+        # output mood field keeps the raw input; only scoring strips
+        r = apply_fusion("\tconvergent\n", {"Core": 0.5, "L5": 0.5, "L2": 0.0})
+        self.assertEqual(r["mood"], "\tconvergent\n")
+
+    def test_symbolic_score_negative_truth_clips(self):
+        from ns_fusion import symbolic_score
+        s = symbolic_score({"truth": -2.0}, {"attention": 150, "compute": 40, "memory_nodes": 8})
+        self.assertEqual(s, 0.55 * 0.0 + 0.45 * 1.0)
+
+    def test_symbolic_score_over_one_resources_clip(self):
+        from ns_fusion import symbolic_score
+        s = symbolic_score({"truth": 0.5}, {"attention": 9999, "compute": 9999, "memory_nodes": 9999})
+        self.assertLessEqual(s, 1.0)
+
+    def test_ns_fitness_all_defaults(self):
+        f = ns_fitness()
+        self.assertGreater(f, 0.0)
+        self.assertLessEqual(f, 1.0)
+
+    def test_promote_decision_none_input(self):
+        d = promote_decision(None)  # type: ignore[arg-type]
+        self.assertEqual(d["action"], "hold")
+        self.assertEqual(d["fused"], 0.0)
+
+    def test_colony_genome_very_large_member_list(self):
+        members = [f"civ_{i}" for i in range(10_000)]
+        g = colony_genome(members)
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, colony_genome(members))
+        # reversed order must match (sorted internally)
+        self.assertEqual(g, colony_genome(list(reversed(members))))
+
+    def test_genome_id_unicode_seed(self):
+        from ns_fusion import genome_id
+        g = genome_id("αβγ-δ")
+        self.assertTrue(g.startswith("gn-"))
+        self.assertEqual(g, genome_id("αβγ-δ"))
+        self.assertNotEqual(g, genome_id("αβγ-ε"))
+
+    def test_apply_fusion_bool_metrics(self):
+        # bool is a subclass of int; _safe_float(True) == 1.0
+        r = apply_fusion("neutral", {"Core": True, "L5": False, "L2": True})
+        self.assertFalse(math.isnan(r["ns_fitness"]))
+        r_num = apply_fusion("neutral", {"Core": 1.0, "L5": 0.0, "L2": 1.0})
         self.assertEqual(r["ns_fitness"], r_num["ns_fitness"])
 
 
